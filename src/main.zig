@@ -2,77 +2,60 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
 const c = @import("c.zig");
+const VulkanDevice = @import("VulkanDevice.zig");
 
-const app_name = "vulkancross";
+const app_name: [:0]const u8 = "vulkancross_glfw";
 
-const validation_layers: []const [*:0]const u8 = if (builtin.mode == std.builtin.OptimizeMode.Debug) blk: {
-    break :blk &.{
-        "VK_LAYER_KHRONOS_validation",
-    };
-} else blk: {
-    break :blk &.{};
+// https://ziggit.dev/t/set-debug-level-at-runtime/6196/3
+pub const std_options: std.Options = .{
+    .logFn = logFn,
+    .log_level = .debug,
 };
 
-const instance_extensions: []const [*:0]const u8 = if (builtin.mode == std.builtin.OptimizeMode.Debug)
-blk: {
-    break :blk &.{
-        vk.extensions.ext_debug_utils.name,
+// https://github.com/vamolessa/zig-sdl-android-template/blob/master/src/android_main.zig
+// make the std.log.<logger> functions write to the android log
+pub fn logFn(
+    comptime message_level: std.log.Level,
+    comptime scope: @Type(.enum_literal),
+    comptime format: []const u8,
+    args: anytype,
+) void {
+    const prefix = if (scope == .default) "" else "(" ++ @tagName(scope) ++ "): ";
+
+    var buf = std.io.FixedBufferStream([4 * 1024]u8){
+        .buffer = undefined,
+        .pos = 0,
     };
-} else blk: {
-    break :blk &.{};
-};
+    var writer = buf.writer();
+    writer.print(prefix ++ format, args) catch {};
 
-const BaseInStructure = vk.BaseWrapperWithCustomDispatch(vk.BaseDispatch);
-
-fn checkValidationLayerSupport(
-    allocator: std.mem.Allocator,
-    vkb: *const BaseInStructure,
-    validationLayers: []const [*:0]const u8,
-) !bool {
-    var layer_count: u32 = undefined;
-    _ = try vkb.enumerateInstanceLayerProperties(&layer_count, null);
-    std.log.debug("{} layers", .{layer_count});
-
-    const availableLayers = try allocator.alloc(vk.LayerProperties, layer_count);
-    defer allocator.free(availableLayers);
-
-    _ = try vkb.enumerateInstanceLayerProperties(&layer_count, @ptrCast(availableLayers));
-
-    for (validationLayers) |layer_name| {
-        var layerFound = false;
-        for (availableLayers) |layer_properties| {
-            if (std.mem.eql(
-                u8,
-                std.mem.sliceTo(layer_name, 0),
-                std.mem.sliceTo(&layer_properties.layer_name, 0),
-            )) {
-                layerFound = true;
-                break;
-            }
-        }
-        if (!layerFound) {
-            std.log.err("{s} not supported", .{layer_name});
-            return false;
-        }
+    if (buf.pos >= buf.buffer.len) {
+        buf.pos = buf.buffer.len - 1;
     }
+    buf.buffer[buf.pos] = 0;
 
-    return true;
-}
-
-fn debugCallback(
-    messageSeverity: vk.DebugUtilsMessageSeverityFlagsEXT,
-    messageType: vk.DebugUtilsMessageTypeFlagsEXT,
-    pCallbackData: ?*const vk.DebugUtilsMessengerCallbackDataEXT,
-    pUserData: ?*anyopaque,
-) callconv(.c) vk.Bool32 {
-    _ = messageSeverity;
-    _ = messageType;
-    _ = pUserData;
-    std.log.debug("[validation layer] {?s}", .{pCallbackData.?.p_message});
-    return vk.FALSE;
+    switch (message_level) {
+        .err => {
+            std.debug.print("\x1b[35m[err]{s}\x1b[0m\n", .{buf.buffer});
+        },
+        .warn => {
+            std.debug.print("\x1b[33m[warn]{s}\x1b[0m\n", .{buf.buffer});
+        },
+        .info => {
+            std.debug.print("\x1b[36m[info]{s}\x1b[0m\n", .{buf.buffer});
+        },
+        .debug => {
+            std.debug.print("\x1b[38;5;08m[debug]{s}\x1b[0m\n", .{buf.buffer});
+        },
+    }
 }
 
 pub fn main() !void {
+    std.log.debug("debug", .{});
+    std.log.info("info", .{});
+    std.log.warn("warn", .{});
+    std.log.err("err", .{});
+
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
@@ -99,72 +82,19 @@ pub fn main() !void {
     //
     // init vulkan
     //
-    const vkb = vk.BaseWrapper.load(c.glfwGetInstanceProcAddress);
-
-    if (!try checkValidationLayerSupport(allocator, &vkb, validation_layers)) {
-        return error.CheckValidationLayer;
-    }
-
-    // prepare extensions
     var glfw_exts_count: u32 = undefined;
     const glfw_exts = c.glfwGetRequiredInstanceExtensions(&glfw_exts_count);
 
-    const all_instance_extensions = try allocator.alloc([*:0]const u8, instance_extensions.len + glfw_exts_count);
-    defer allocator.free(all_instance_extensions);
-    for (instance_extensions, 0..) |instance_extension, i| {
-        all_instance_extensions[i] = instance_extension;
-    }
-    var i = instance_extensions.len;
-    for (0..glfw_exts_count) |j| {
-        all_instance_extensions[i] = glfw_exts[j];
-        i += 1;
-    }
-
-    // VkInstance
-    const debug_utils_messenger_create_info = vk.DebugUtilsMessengerCreateInfoEXT{
-        .message_type = .{
-            .general_bit_ext = true,
-            .validation_bit_ext = true,
-            .performance_bit_ext = true,
+    var vulkan_device = try VulkanDevice.init(
+        allocator,
+        c.glfwGetInstanceProcAddress,
+        .{
+            .app_name = app_name,
+            .instance_extensions = @ptrCast(glfw_exts[0..glfw_exts_count]),
+            .is_debug = builtin.mode == std.builtin.OptimizeMode.Debug,
         },
-        .message_severity = .{
-            .verbose_bit_ext = true,
-            .info_bit_ext = true,
-            .warning_bit_ext = true,
-            .error_bit_ext = true,
-        },
-        .pfn_user_callback = &debugCallback,
-    };
-
-    const app_info = vk.ApplicationInfo{
-        .p_application_name = app_name,
-        .application_version = @bitCast(vk.makeApiVersion(0, 0, 0, 0)),
-        .p_engine_name = app_name,
-        .engine_version = @bitCast(vk.makeApiVersion(0, 0, 0, 0)),
-        .api_version = @bitCast(vk.API_VERSION_1_2),
-    };
-    for (validation_layers) |name| {
-        std.log.debug("layer: {s}", .{name});
-    }
-    for (all_instance_extensions) |name| {
-        std.log.debug("instance_extension: {s}", .{name});
-    }
-    const vk_instance = try vkb.createInstance(&.{
-        .p_next = &debug_utils_messenger_create_info,
-        .p_application_info = &app_info,
-        // layers
-        .enabled_layer_count = validation_layers.len,
-        .pp_enabled_layer_names = @ptrCast(validation_layers),
-        // extensions
-        .enabled_extension_count = @intCast(all_instance_extensions.len),
-        .pp_enabled_extension_names = @ptrCast(all_instance_extensions),
-    }, null);
-
-    const vki = vk.InstanceWrapper.load(vk_instance, vkb.dispatch.vkGetInstanceProcAddr.?);
-    const p_instance = vk.InstanceProxy.init(vk_instance, &vki);
-    errdefer p_instance.destroyInstance(null);
-
-    const debug_utils_messenger = try p_instance.createDebugUtilsMessengerEXT(&debug_utils_messenger_create_info, null);
+    );
+    defer vulkan_device.deinit();
 
     while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
         c.glfwPollEvents();
@@ -175,7 +105,4 @@ pub fn main() !void {
         // Don't present or resize swapchain while the window is minimized
         if (w != 0 and h != 0) {}
     }
-
-    p_instance.destroyDebugUtilsMessengerEXT(debug_utils_messenger, null);
-    p_instance.destroyInstance(null);
 }
