@@ -19,6 +19,11 @@ pub fn build(b: *std.Build) void {
 
     build_glfw.link(b, exe);
 
+    const vulkan = b.dependency("vulkan_zig", .{
+        .registry = b.dependency("vulkan_headers", .{}).path("registry/vk.xml"),
+    }).module("vulkan-zig");
+    exe.root_module.addImport("vulkan", vulkan);
+
     const run_cmd = b.addRunArtifact(exe);
     run_cmd.step.dependOn(b.getInstallStep());
     if (b.args) |args| {
