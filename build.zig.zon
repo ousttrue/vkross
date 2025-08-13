@@ -16,6 +16,10 @@
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
             .hash = "N-V-__8AAAkkoQGn5z1yoNVrwqZfnYmZp8AZ5CJgoHRMQI0c",
         },
+        .android = .{
+            .url = "git+https://github.com/silbinarywolf/zig-android-sdk.git#7715c4bf14d89fc2116bbc04d49c88788ae4f412",
+            .hash = "android-0.1.0-7iz7QgXdAQD2QZ-O9TLdqgzlCFrWXogRQUCvUaYlfuKL",
+        },
     },
     .paths = .{
         "build.zig",
