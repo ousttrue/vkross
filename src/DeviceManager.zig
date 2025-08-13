@@ -2,18 +2,33 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 allocator: std.mem.Allocator,
-vki: *const vk.InstanceProxy,
-device: vk.Device,
-vkd: *const vk.DeviceWrapper,
+vkd: *vk.DeviceWrapper,
+vk_device: ?vk.Device = null,
 
 pub fn init(
     allocator: std.mem.Allocator,
+) @This() {
+    return .{
+        .allocator = allocator,
+        .vkd = allocator.create(vk.DeviceWrapper) catch @panic("OOP"),
+    };
+}
+
+pub fn deinit(self: *@This()) void {
+    if (self.vk_device) |vk_device| {
+        self.vkd.destroyDevice(vk_device, null);
+    }
+    self.allocator.destroy(self.vkd);
+}
+
+pub fn create(
+    self: *@This(),
     vki: *const vk.InstanceProxy,
     physical_device: vk.PhysicalDevice,
     queue_family_index: u32,
     present_queue_family_index: u32,
     device_extensions: []const [*:0]const u8,
-) !@This() {
+) !vk.DeviceProxy {
     const priority = [_]f32{1};
     const qci = [_]vk.DeviceQueueCreateInfo{
         .{
@@ -35,24 +50,14 @@ pub fn init(
     for (device_extensions) |name| {
         std.log.debug("device extension: {s}", .{name});
     }
-    const device = try vki.createDevice(physical_device, &.{
+    const vk_device = try vki.createDevice(physical_device, &.{
         .queue_create_info_count = queue_count,
         .p_queue_create_infos = &qci,
         .enabled_extension_count = @intCast(device_extensions.len),
         .pp_enabled_extension_names = @ptrCast(device_extensions),
     }, null);
-    const vkd = try allocator.create(vk.DeviceWrapper);
-    vkd.* = vk.DeviceWrapper.load(device, vki.wrapper.dispatch.vkGetDeviceProcAddr.?);
+    self.vk_device = vk_device;
+    self.vkd.* = vk.DeviceWrapper.load(vk_device, vki.wrapper.dispatch.vkGetDeviceProcAddr.?);
 
-    return .{
-        .allocator = allocator,
-        .vki = vki,
-        .device = device,
-        .vkd = vkd,
-    };
-}
-
-pub fn deinit(self: *@This()) void {
-    self.vkd.destroyDevice(self.device, null);
-    self.allocator.destroy(self.vkd);
+    return vk.DeviceProxy.init(vk_device, self.vkd);
 }

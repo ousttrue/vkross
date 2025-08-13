@@ -25,9 +25,31 @@ fn debugCallback(
 allocator: std.mem.Allocator,
 vkb: vk.BaseWrapper,
 vki: *vk.InstanceWrapper,
-vkp_instance: vk.InstanceProxy = undefined,
-debug_utils_messenger: vk.DebugUtilsMessengerEXT,
-physical_devices: []vk.PhysicalDevice,
+
+vk_instance: ?vk.Instance = null,
+debug_utils_messenger: vk.DebugUtilsMessengerEXT = .null_handle,
+physical_devices: []vk.PhysicalDevice = &.{},
+
+pub fn init(
+    allocator: std.mem.Allocator,
+    loader: anytype,
+) @This() {
+    const self = @This(){
+        .allocator = allocator,
+        .vkb = vk.BaseWrapper.load(loader),
+        .vki = allocator.create(vk.InstanceWrapper) catch @panic("OOP"),
+    };
+    return self;
+}
+
+pub fn deinit(self: *@This()) void {
+    self.allocator.free(self.physical_devices);
+    if (self.vk_instance) |vk_instance| {
+        self.vki.destroyDebugUtilsMessengerEXT(vk_instance, self.debug_utils_messenger, null);
+        self.vki.destroyInstance(vk_instance, null);
+    }
+    self.allocator.destroy(self.vki);
+}
 
 pub const InitOptions = struct {
     app_name: [:0]const u8 = "vulkancross",
@@ -35,13 +57,10 @@ pub const InitOptions = struct {
     instance_extensions: []const [*:0]const u8 = &.{},
 };
 
-pub fn init(
-    allocator: std.mem.Allocator,
-    loader: anytype,
+pub fn create(
+    self: *@This(),
     opts: InitOptions,
-) !@This() {
-    const vkb = vk.BaseWrapper.load(loader);
-
+) !vk.InstanceProxy {
     const layers: []const [*:0]const u8 = if (opts.is_debug) blk: {
         break :blk &.{
             "VK_LAYER_KHRONOS_validation",
@@ -49,7 +68,7 @@ pub fn init(
     } else blk: {
         break :blk &.{};
     };
-    try checkValidationLayerSupport(allocator, &vkb, layers);
+    try checkValidationLayerSupport(self.allocator, &self.vkb, layers);
 
     const debug_extensions: []const [*:0]const u8 = if (opts.is_debug) blk: {
         break :blk &.{
@@ -60,11 +79,11 @@ pub fn init(
     };
 
     const all_instance_extensions = try std.mem.concat(
-        allocator,
+        self.allocator,
         [*:0]const u8,
         &.{ opts.instance_extensions, debug_extensions },
     );
-    defer allocator.free(all_instance_extensions);
+    defer self.allocator.free(all_instance_extensions);
 
     const debug_utils_messenger_create_info = vk.DebugUtilsMessengerCreateInfoEXT{
         .message_type = .{
@@ -94,7 +113,7 @@ pub fn init(
     for (all_instance_extensions) |name| {
         std.log.debug("instance_extension: {s}", .{name});
     }
-    const vk_instance = try vkb.createInstance(&.{
+    const vk_instance = try self.vkb.createInstance(&.{
         .p_next = &debug_utils_messenger_create_info,
         .p_application_info = &app_info,
         // layers
@@ -104,40 +123,17 @@ pub fn init(
         .enabled_extension_count = @intCast(all_instance_extensions.len),
         .pp_enabled_extension_names = @ptrCast(all_instance_extensions),
     }, null);
+    self.vk_instance = vk_instance;
 
-    const vki = try allocator.create(vk.InstanceWrapper);
-    vki.* = vk.InstanceWrapper.load(vk_instance, vkb.dispatch.vkGetInstanceProcAddr.?);
-    const vkp_instance = vk.InstanceProxy.init(vk_instance, vki);
+    self.vki.* = vk.InstanceWrapper.load(vk_instance, self.vkb.dispatch.vkGetInstanceProcAddr.?);
+    self.debug_utils_messenger = try self.vki.createDebugUtilsMessengerEXT(
+        vk_instance,
+        &debug_utils_messenger_create_info,
+        null,
+    );
+    self.physical_devices = try self.vki.enumeratePhysicalDevicesAlloc(vk_instance, self.allocator);
 
-    const physical_devices = try vkp_instance.enumeratePhysicalDevicesAlloc(allocator);
-    // defer allocator.free(pdevs);
-
-    // // const physical_devices = try allocator.alloc(PhysicalDevice, pdevs.len);
-    // for (pdevs, physical_devices, 0..) |src, *dst, i| {
-    //     dst.* = 
-    //         .physical_device = src,
-    //     };
-    //     std.log.info("[physical_device: {}] {s}", .{i, std.mem.sliceTo(&dst.properties.device_name, 0)});
-    // }
-
-    return .{
-        .allocator = allocator,
-        .vkb = vkb,
-        .vkp_instance = vkp_instance,
-        .vki = vki,
-        .debug_utils_messenger = try vkp_instance.createDebugUtilsMessengerEXT(
-            &debug_utils_messenger_create_info,
-            null,
-        ),
-        .physical_devices = physical_devices,
-    };
-}
-
-pub fn deinit(self: *@This()) void {
-    self.allocator.free(self.physical_devices);
-    self.vkp_instance.destroyDebugUtilsMessengerEXT(self.debug_utils_messenger, null);
-    self.vkp_instance.destroyInstance(null);
-    self.allocator.destroy(self.vki);
+    return vk.InstanceProxy.init(vk_instance, self.vki);
 }
 
 fn checkValidationLayerSupport(

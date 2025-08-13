@@ -2,21 +2,19 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 allocator: std.mem.Allocator,
-device: vk.Device,
-vkd: *const vk.DeviceWrapper,
+device: *const vk.DeviceProxy,
 swapchain: vk.SwapchainKHR,
 images: []vk.Image,
 present_queue: vk.Queue,
 
 pub fn init(
     allocator: std.mem.Allocator,
-    vkp_instance: *vk.InstanceProxy,
+    vkp_instance: *const vk.InstanceProxy,
     surface: vk.SurfaceKHR,
     queue_family_index: u32,
     present_queue_family_index: u32,
     physical_device: vk.PhysicalDevice,
-    device: vk.Device,
-    vkd: *const vk.DeviceWrapper,
+    device: *const vk.DeviceProxy,
 ) !@This() {
     const surface_capabilities = try vkp_instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
         physical_device,
@@ -38,7 +36,7 @@ pub fn init(
     else
         .exclusive;
 
-    const swapchain = try vkd.createSwapchainKHR(device, &.{
+    const swapchain = try device.createSwapchainKHR(&.{
         .surface = surface,
         .min_image_count = surface_capabilities.min_image_count,
         .image_format = preferred.format,
@@ -56,28 +54,27 @@ pub fn init(
     }, null);
 
     var image_count: u32 = undefined;
-    _ = try vkd.getSwapchainImagesKHR(device, swapchain, &image_count, null);
+    _ = try device.getSwapchainImagesKHR(swapchain, &image_count, null);
     if (image_count == 0) {
         @panic("no swapchain image");
     }
     std.log.info("swapchain image: {}", .{image_count});
 
     const images = try allocator.alloc(vk.Image, image_count);
-    _ = try vkd.getSwapchainImagesKHR(device, swapchain, &image_count, @ptrCast(images));
+    _ = try device.getSwapchainImagesKHR(swapchain, &image_count, @ptrCast(images));
 
     return .{
         .allocator = allocator,
         .device = device,
-        .vkd = vkd,
         .swapchain = swapchain,
         .images = images,
-        .present_queue = vkd.getDeviceQueue(device, present_queue_family_index, 0),
+        .present_queue = device.getDeviceQueue(present_queue_family_index, 0),
     };
 }
 
 pub fn deinit(self: @This()) void {
     self.allocator.free(self.images);
-    self.vkd.destroySwapchainKHR(self.device, self.swapchain, null);
+    self.device.destroySwapchainKHR(self.swapchain, null);
 }
 
 pub const AcquiredImage = struct {
@@ -92,8 +89,7 @@ pub fn acquireNextImage(
     image_available_semaphore: vk.Semaphore,
 ) !AcquiredImage {
     // uint32_t imageIndex;
-    const acquired = try self.vkd.acquireNextImageKHR(
-        self.device,
+    const acquired = try self.device.acquireNextImageKHR(
         self.swapchain,
         std.math.maxInt(u64),
         image_available_semaphore,
@@ -114,7 +110,7 @@ pub fn acquireNextImage(
 }
 
 pub fn present(self: @This(), imageIndex: u32, semaphores: []vk.Semaphore) !vk.Result {
-    return self.vkd.queuePresentKHR(self.present_queue, &.{
+    return self.device.queuePresentKHR(self.present_queue, &.{
         .swapchain_count = 1,
         .p_swapchains = @ptrCast(&self.swapchain),
         .p_image_indices = @ptrCast(&imageIndex),

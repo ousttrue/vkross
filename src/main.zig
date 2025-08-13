@@ -2,9 +2,10 @@ const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
 const c = @import("c.zig");
-const VulkanInstance = @import("VulkanInstance.zig");
-const VulkanDevice = @import("VulkanDevice.zig");
-const VulkanSwapchain = @import("VulkanSwapchain.zig");
+const InstanceManager = @import("InstanceManager.zig");
+const DeviceManager = @import("DeviceManager.zig");
+const Swapchain = @import("Swapchain.zig");
+const renderer = @import("renderer.zig");
 
 pub extern fn glfwCreateWindowSurface(
     instance: vk.Instance,
@@ -91,77 +92,77 @@ pub fn main() !void {
     //
     // init vulkan
     //
+    var instance_manager = InstanceManager.init(allocator, c.glfwGetInstanceProcAddress);
+    defer instance_manager.deinit();
+
     var glfw_exts_count: u32 = undefined;
     const glfw_instance_extensions = c.glfwGetRequiredInstanceExtensions(&glfw_exts_count);
-
-    var vulkan_instance = try VulkanInstance.init(
-        allocator,
-        c.glfwGetInstanceProcAddress,
-        .{
-            .app_name = app_name,
-            .instance_extensions = @ptrCast(glfw_instance_extensions[0..glfw_exts_count]),
-            .is_debug = builtin.mode == std.builtin.OptimizeMode.Debug,
-        },
-    );
-    defer vulkan_instance.deinit();
+    const instance = try instance_manager.create(.{
+        .app_name = app_name,
+        .instance_extensions = @ptrCast(glfw_instance_extensions[0..glfw_exts_count]),
+        .is_debug = builtin.mode == std.builtin.OptimizeMode.Debug,
+    });
 
     // VkSurface from glfw
     var surface: vk.SurfaceKHR = undefined;
-    if (glfwCreateWindowSurface(vulkan_instance.vkp_instance.handle, window, null, &surface) != .success) {
+    if (glfwCreateWindowSurface(instance.handle, window, null, &surface) != .success) {
         return error.SurfaceInitFailed;
     }
-    defer vulkan_instance.vkp_instance.destroySurfaceKHR(surface, null);
+    defer instance.destroySurfaceKHR(surface, null);
 
     // TODO: choose physical device, queue
-    const physical_device = vulkan_instance.physical_devices[0];
+    const physical_device = instance_manager.physical_devices[0];
     const queue_family_index: u32 = 0;
     const present_queue_family_index: u32 = 0;
 
-    const device_extensions = [_][*:0]const u8{vk.extensions.khr_swapchain.name};
-    var vulkan_device = try VulkanDevice.init(
+    var device_manager = DeviceManager.init(
         allocator,
-        &vulkan_instance.vkp_instance,
+    );
+    defer device_manager.deinit();
+
+    const device_extensions = [_][*:0]const u8{vk.extensions.khr_swapchain.name};
+    const device = try device_manager.create(
+        &instance,
         physical_device,
         queue_family_index,
         present_queue_family_index,
         &device_extensions,
     );
-    defer vulkan_device.deinit();
-    const queue = vulkan_device.vkd.getDeviceQueue(vulkan_device.device, queue_family_index, 0);
+    const queue = device.getDeviceQueue(queue_family_index, 0);
 
-    var vulkan_swapchain = try VulkanSwapchain.init(
+    var swapchain = try Swapchain.init(
         allocator,
-        &vulkan_instance.vkp_instance,
+        &instance,
         surface,
         queue_family_index,
         present_queue_family_index,
         physical_device,
-        vulkan_device.device,
-        vulkan_device.vkd,
+        &device,
     );
-    defer vulkan_swapchain.deinit();
+    defer swapchain.deinit();
 
-    const acquired_semaphore = try vulkan_device.vkd.createSemaphore(vulkan_device.device, &.{}, null);
-    defer vulkan_device.vkd.destroySemaphore(vulkan_device.device, acquired_semaphore, null);
+    // frame resource
+    const acquired_semaphore = try device.createSemaphore(&.{}, null);
+    defer device.destroySemaphore(acquired_semaphore, null);
 
-    const submit_fence = try vulkan_device.vkd.createFence(vulkan_device.device, &.{
+    const submit_fence = try device.createFence(&.{
         // .flags = .{ .signaled_bit = true },
     }, null);
-    defer vulkan_device.vkd.destroyFence(vulkan_device.device, submit_fence, null);
+    defer device.destroyFence(submit_fence, null);
 
-    const pool = try vulkan_device.vkd.createCommandPool(vulkan_device.device, &.{
+    const pool = try device.createCommandPool(&.{
         .queue_family_index = queue_family_index,
         .flags = .{ .reset_command_buffer_bit = true },
     }, null);
-    defer vulkan_device.vkd.destroyCommandPool(vulkan_device.device, pool, null);
+    defer device.destroyCommandPool(pool, null);
 
     var commandbuffers: [1]vk.CommandBuffer = undefined;
-    try vulkan_device.vkd.allocateCommandBuffers(vulkan_device.device, &.{
+    try device.allocateCommandBuffers(&.{
         .command_pool = pool,
         .level = .primary,
         .command_buffer_count = 1,
     }, &commandbuffers);
-    defer vulkan_device.vkd.freeCommandBuffers(vulkan_device.device, pool, 1, &commandbuffers);
+    defer device.freeCommandBuffers(pool, 1, &commandbuffers);
 
     while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
         c.glfwPollEvents();
@@ -171,78 +172,15 @@ pub fn main() !void {
 
         // Don't present or resize swapchain while the window is minimized
         if (w != 0 and h != 0) {
-            const acquired = try vulkan_swapchain.acquireNextImage(acquired_semaphore);
+            const acquired = try swapchain.acquireNextImage(acquired_semaphore);
             if (acquired.result != .success) {
+                // TODO: resize swapchain
                 std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
                 break;
             } else {
-                {
-                    const sub = vk.ImageSubresourceRange{
-                        .aspect_mask = .{ .color_bit = true },
-                        .layer_count = 1,
-                        .base_array_layer = 0,
-                        .level_count = 1,
-                        .base_mip_level = 0,
-                    };
-                    // record commandbuffer
-                    try vulkan_device.vkd.beginCommandBuffer(commandbuffers[0], &.{});
+                try renderer.recordClearImage(&device, commandbuffers[0], acquired.image);
 
-                    // .undefined => .transfer
-                    vulkan_device.vkd.cmdPipelineBarrier(commandbuffers[0],
-                        // src_stage_mask
-                        .{ .bottom_of_pipe_bit = true },
-                        // dst_stage_mask
-                        .{ .top_of_pipe_bit = true }, .{},
-                        // memory, buffer
-                        0, null, 0, null,
-                        // image
-                        1, &.{.{
-                            .src_access_mask = .{ .memory_read_bit = true },
-                            .old_layout = .undefined,
-                            .dst_access_mask = .{ .memory_write_bit = true },
-                            .new_layout = .transfer_dst_optimal,
-                            .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
-                            .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
-                            .image = acquired.image,
-                            .subresource_range = sub,
-                        }});
-
-                    // require.transfer_dst_optimal
-                    vulkan_device.vkd.cmdClearColorImage(
-                        commandbuffers[0],
-                        acquired.image,
-                        .transfer_dst_optimal,
-                        &.{
-                            .float_32 = .{ 0, 1, 0, 0 },
-                        },
-                        1,
-                        @ptrCast(&sub),
-                    );
-
-                    // .transfer_dst_optimal => .present_src_khr
-                    vulkan_device.vkd.cmdPipelineBarrier(commandbuffers[0],
-                        // src_stage_mask
-                        .{ .bottom_of_pipe_bit = true },
-                        // dst_stage_mask
-                        .{ .top_of_pipe_bit = true }, .{},
-                        // memory, buffer
-                        0, null, 0, null,
-                        // image
-                        1, &.{.{
-                            .src_access_mask = .{ .memory_write_bit = true },
-                            .old_layout = .transfer_dst_optimal,
-                            .dst_access_mask = .{ .memory_read_bit = true },
-                            .new_layout = .present_src_khr, // this is required from VkQueuePresentKHR
-                            .src_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
-                            .dst_queue_family_index = vk.QUEUE_FAMILY_IGNORED,
-                            .image = acquired.image,
-                            .subresource_range = sub,
-                        }});
-
-                    try vulkan_device.vkd.endCommandBuffer(commandbuffers[0]);
-                }
-
-                try vulkan_device.vkd.queueSubmit(queue, 1, &.{.{
+                try device.queueSubmit(queue, 1, &.{.{
                     .wait_semaphore_count = 1,
                     .p_wait_semaphores = @ptrCast(&acquired_semaphore),
                     .p_wait_dst_stage_mask = &.{.{
@@ -252,10 +190,10 @@ pub fn main() !void {
                     .command_buffer_count = 1,
                     .p_command_buffers = &commandbuffers,
                 }}, submit_fence);
-                _ = try vulkan_device.vkd.waitForFences(vulkan_device.device, 1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
-                try vulkan_device.vkd.resetFences(vulkan_device.device, 1, @ptrCast(&submit_fence));
+                _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
+                try device.resetFences(1, @ptrCast(&submit_fence));
 
-                const res = try vulkan_swapchain.present(acquired.image_index, &.{});
+                const res = try swapchain.present(acquired.image_index, &.{});
                 if (res != .success) {
                     std.log.warn("present: {s}", .{@tagName(res)});
                 }
@@ -266,5 +204,5 @@ pub fn main() !void {
         }
     }
 
-    try vulkan_device.vkd.deviceWaitIdle(vulkan_device.device);
+    try device.deviceWaitIdle();
 }
