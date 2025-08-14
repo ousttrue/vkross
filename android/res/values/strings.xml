@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <!-- Pretty name of your app -->
-    <string name="app_name">Zig NativeActivity</string>
+    <string name="app_name">vkross</string>
     <!-- 
     This is required for the APK name. This identifies your app, Android will associate
     your signing key with this identifier and will prevent updates if the key changes.

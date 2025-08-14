@@ -9,16 +9,20 @@
             .hash = "N-V-__8AAL40TADEbrysYHBl-UIZO4KiG4chP8pLDVDINGH4",
         },
         .vulkan_zig = .{
-            .url = "https://github.com/Snektron/vulkan-zig/archive/c66bddee009a8c4b71082ab7af723ed885161650.tar.gz",
-            .hash = "vulkan-0.0.0-r7YtxwZVAwDbCFXX5GpnS436SfBec9INY0zq-2OQ2BUp",
+            .url = "https://github.com/Snektron/vulkan-zig/archive/2be3eefdfe5255beb7ed5cb0a14d8d2da35dc00c.tar.gz",
+            .hash = "vulkan-0.0.0-r7Ytx25WAwD68cFINm-HH0vC_zJqVIpgeby404eC5MGy",
         },
         .vulkan_headers = .{
             .url = "https://github.com/KhronosGroup/Vulkan-Headers/archive/v1.3.283.tar.gz",
             .hash = "N-V-__8AAAkkoQGn5z1yoNVrwqZfnYmZp8AZ5CJgoHRMQI0c",
         },
+        .@"vulkan-validationlayers" = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-ValidationLayers/releases/download/vulkan-sdk-1.4.313.0/android-binaries-1.4.313.0.zip",
+            .hash = "N-V-__8AAJw0VwVoIyuzLrXYjWtwDckHLzY_k7CQRovnUYsO",
+        },
         .android = .{
-            .url = "git+https://github.com/silbinarywolf/zig-android-sdk.git#7715c4bf14d89fc2116bbc04d49c88788ae4f412",
-            .hash = "android-0.1.0-7iz7QgXdAQD2QZ-O9TLdqgzlCFrWXogRQUCvUaYlfuKL",
+            .url = "git+https://github.com/ousttrue/zig-android-sdk.git?ref=addLibrary#3092b02730672a90504809904a5f05c9e2fa18cb",
+            .hash = "android-0.1.0-7iz7QuXeAQAEJoUVh7OHiRdlPIZjsZ2B_Jkqa3slened",
         },
     },
     .paths = .{

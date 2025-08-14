@@ -1,11 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
+const constants = @import("constants.generated.zig");
 const c = @import("c.zig");
 const InstanceManager = @import("InstanceManager.zig");
 const DeviceManager = @import("DeviceManager.zig");
 const Swapchain = @import("Swapchain.zig");
 const renderer = @import("renderer.zig");
+const DynamicLoader = @import("DynamicLoader.zig");
 
 pub extern fn glfwCreateWindowSurface(
     instance: vk.Instance,
@@ -13,8 +15,6 @@ pub extern fn glfwCreateWindowSurface(
     allocation_callbacks: ?*const vk.AllocationCallbacks,
     surface: *vk.SurfaceKHR,
 ) vk.Result;
-
-const app_name: [:0]const u8 = "vulkancross_glfw";
 
 // https://ziggit.dev/t/set-debug-level-at-runtime/6196/3
 pub const std_options: std.Options = .{
@@ -60,7 +60,16 @@ pub fn logFn(
     }
 }
 
+var g_loader: *const DynamicLoader = undefined;
+
+fn getProcAddress(_: anytype, name: [*:0]const u8) ?*anyopaque {
+    return g_loader.getProcAddress(@ptrCast(name));
+}
+
 pub fn main() !void {
+    const loader = DynamicLoader.init(.{});
+    g_loader = &loader;
+
     std.log.debug("debug", .{});
     std.log.info("info", .{});
     std.log.warn("warn", .{});
@@ -83,7 +92,7 @@ pub fn main() !void {
     const window = c.glfwCreateWindow(
         @intCast(extent.width),
         @intCast(extent.height),
-        app_name,
+        constants.appname,
         null,
         null,
     ) orelse return error.WindowInitFailed;
@@ -92,13 +101,13 @@ pub fn main() !void {
     //
     // init vulkan
     //
-    var instance_manager = InstanceManager.init(allocator, c.glfwGetInstanceProcAddress);
+    // var instance_manager = InstanceManager.init(allocator, c.glfwGetInstanceProcAddress);
+    var instance_manager = InstanceManager.init(allocator, &getProcAddress);
     defer instance_manager.deinit();
-
     var glfw_exts_count: u32 = undefined;
     const glfw_instance_extensions = c.glfwGetRequiredInstanceExtensions(&glfw_exts_count);
     const instance = try instance_manager.create(.{
-        .app_name = app_name,
+        .app_name = constants.appname,
         .instance_extensions = @ptrCast(glfw_instance_extensions[0..glfw_exts_count]),
         .is_debug = builtin.mode == std.builtin.OptimizeMode.Debug,
     });
