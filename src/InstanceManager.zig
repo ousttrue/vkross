@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const vk = @import("vulkan");
+const PhysicalDevice = @import("PhysicalDevice.zig");
 
 fn debugCallback(
     messageSeverity: vk.DebugUtilsMessageSeverityFlagsEXT,
@@ -28,7 +29,7 @@ vki: *vk.InstanceWrapper,
 
 vk_instance: ?vk.Instance = null,
 debug_utils_messenger: vk.DebugUtilsMessengerEXT = .null_handle,
-physical_devices: []vk.PhysicalDevice = &.{},
+physical_devices: []PhysicalDevice = &.{},
 
 pub fn init(
     allocator: std.mem.Allocator,
@@ -43,7 +44,11 @@ pub fn init(
 }
 
 pub fn deinit(self: *@This()) void {
+    for (self.physical_devices) |physical_device| {
+        physical_device.deinit(self.allocator);
+    }
     self.allocator.free(self.physical_devices);
+
     if (self.vk_instance) |vk_instance| {
         self.vki.destroyDebugUtilsMessengerEXT(vk_instance, self.debug_utils_messenger, null);
         self.vki.destroyInstance(vk_instance, null);
@@ -131,9 +136,17 @@ pub fn create(
         &debug_utils_messenger_create_info,
         null,
     );
-    self.physical_devices = try self.vki.enumeratePhysicalDevicesAlloc(vk_instance, self.allocator);
 
-    return vk.InstanceProxy.init(vk_instance, self.vki);
+    const proxy = vk.InstanceProxy.init(vk_instance, self.vki);
+
+    const physical_devices = try self.vki.enumeratePhysicalDevicesAlloc(vk_instance, self.allocator);
+    defer self.allocator.free(physical_devices);
+    self.physical_devices = try self.allocator.alloc(PhysicalDevice, physical_devices.len);
+    for (physical_devices, 0..) |physical_device, i| {
+        self.physical_devices[i] = try PhysicalDevice.init(self.allocator, &proxy, physical_device);
+    }
+
+    return proxy;
 }
 
 fn checkValidationLayerSupport(
@@ -167,4 +180,49 @@ fn checkValidationLayerSupport(
             return error.LayerUnsupported;
         }
     }
+}
+
+const PhysicalDeviceAndPresentQueue = struct {
+    physical_device: *const PhysicalDevice,
+    graphics_queue_family_index: u32,
+    present_queue_family_index: u32,
+};
+
+pub fn pickPhysicalDevice(
+    self: @This(),
+    instance: *const vk.InstanceProxy,
+    surface: vk.SurfaceKHR,
+) !?PhysicalDeviceAndPresentQueue {
+    var picked: ?*const PhysicalDevice = null;
+    var picked_queue_family_index: ?u32 = null;
+
+    for (self.physical_devices) |*physical_device| {
+        try physical_device.debugPrint(instance, surface);
+        if (try physical_device.getFirstPresentQueueFamily(instance, surface)) |present_queue_family_index| {
+            if (picked == null) {
+                // use 1st
+                picked = physical_device;
+                picked_queue_family_index = present_queue_family_index;
+            }
+        }
+    }
+    if (picked) |p| {
+        if (picked_queue_family_index) |q| {
+            return .{
+                .physical_device = p,
+                .graphics_queue_family_index = p.select_graphics_family_index() orelse @panic("NoGraphicsQueue"),
+                .present_queue_family_index = q,
+            };
+        }
+    }
+    if (self.physical_devices.len > 0) {
+        // fall back. use 1st device
+        const p = &self.physical_devices[0];
+        return .{
+            .physical_device = p,
+            .graphics_queue_family_index = p.select_graphics_family_index() orelse @panic("NoGraphicsQueue"),
+            .present_queue_family_index = 0,
+        };
+    }
+    return null;
 }

@@ -55,21 +55,9 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    _ = app;
+    // _ = app;
     _ = userdata;
     std.log.info("## main_loop", .{});
-
-    //   vuloxr::vk::Instance instance;
-    //   // instance.appInfo.pApplicationName = "vulfwk";
-    //   // instance.appInfo.pEngineName = "vulfwk";
-    //   instance.extensions = {"VK_KHR_surface", "VK_KHR_android_surface"};
-    // #ifdef NDEBUG
-    // #else
-    //   instance.addLayer("VK_LAYER_KHRONOS_validation");
-    //   instance.addExtension(VK_EXT_DEBUG_UTILS_EXTENSION_NAME) ||
-    //       instance.addExtension("VK_EXT_debug_report");
-    // #endif
-    //   vuloxr::vk::CheckVkResult(instance.create());
 
     //
     // init vulkan
@@ -84,20 +72,14 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
         .instance_extensions = &.{ "VK_KHR_surface", "VK_KHR_android_surface" },
         .is_debug = builtin.mode == std.builtin.OptimizeMode.Debug,
     });
-    _ = instance;
 
-    //   VkAndroidSurfaceCreateInfoKHR info = {
-    //       .sType = VK_STRUCTURE_TYPE_ANDROID_SURFACE_CREATE_INFO_KHR,
-    //       .flags = 0,
-    //       .window = app.window,
-    //   };
-    //   VkSurfaceKHR surface;
-    //   vuloxr::vk::CheckVkResult(
-    //       vkCreateAndroidSurfaceKHR(instance, &info, nullptr, &surface));
-    //
-    //   auto [physicalDevice, presentFamily] = instance.pickPhysicalDevice(surface);
-    //   assert(physicalDevice);
-    //
+    const surface = try instance.createAndroidSurfaceKHR(&.{
+        .window = @ptrCast(app.window),
+    }, null);
+
+    const picked = try instance_manager.pickPhysicalDevice(&instance, surface);
+    _ = picked;
+
     //   // vuloxr::vk::Surface surface(instance, _surface, picked.physicalDevice);
     //
     //   vuloxr::vk::Device device;

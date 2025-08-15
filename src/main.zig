@@ -119,10 +119,9 @@ pub fn main() !void {
     }
     defer instance.destroySurfaceKHR(surface, null);
 
-    // TODO: choose physical device, queue
-    const physical_device = instance_manager.physical_devices[0];
-    const queue_family_index: u32 = 0;
-    const present_queue_family_index: u32 = 0;
+    const picked = try instance_manager.pickPhysicalDevice(&instance, surface) orelse {
+        return error.NoSuitablePhysicalDevice;
+    };
 
     var device_manager = DeviceManager.init(
         allocator,
@@ -132,20 +131,20 @@ pub fn main() !void {
     const device_extensions = [_][*:0]const u8{vk.extensions.khr_swapchain.name};
     const device = try device_manager.create(
         &instance,
-        physical_device,
-        queue_family_index,
-        present_queue_family_index,
+        picked.physical_device.physical_device,
+        picked.graphics_queue_family_index,
+        picked.present_queue_family_index,
         &device_extensions,
     );
-    const queue = device.getDeviceQueue(queue_family_index, 0);
+    const queue = device.getDeviceQueue(picked.graphics_queue_family_index, 0);
 
     var swapchain = try Swapchain.init(
         allocator,
         &instance,
         surface,
-        queue_family_index,
-        present_queue_family_index,
-        physical_device,
+        picked.graphics_queue_family_index,
+        picked.present_queue_family_index,
+        picked.physical_device.physical_device,
         &device,
     );
     defer swapchain.deinit();
@@ -160,7 +159,7 @@ pub fn main() !void {
     defer device.destroyFence(submit_fence, null);
 
     const pool = try device.createCommandPool(&.{
-        .queue_family_index = queue_family_index,
+        .queue_family_index = picked.graphics_queue_family_index,
         .flags = .{ .reset_command_buffer_bit = true },
     }, null);
     defer device.destroyCommandPool(pool, null);
