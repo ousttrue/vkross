@@ -122,12 +122,17 @@ pub fn main() !void {
     const picked = try instance_manager.pickPhysicalDevice(&instance, surface) orelse {
         return error.NoSuitablePhysicalDevice;
     };
+    const format = try Swapchain.chooseSwapSurfaceFormat(
+        allocator,
+        &instance,
+        picked.physical_device.physical_device,
+        surface,
+    );
 
     var device_manager = DeviceManager.init(
         allocator,
     );
     defer device_manager.deinit();
-
     const device_extensions = [_][*:0]const u8{vk.extensions.khr_swapchain.name};
     const device = try device_manager.create(
         &instance,
@@ -146,6 +151,8 @@ pub fn main() !void {
         picked.present_queue_family_index,
         picked.physical_device.physical_device,
         &device,
+        format,
+        .{ .opaque_bit_khr = true },
     );
     defer swapchain.deinit();
 
@@ -186,7 +193,12 @@ pub fn main() !void {
                 std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
                 break;
             } else {
-                try renderer.recordClearImage(&device, commandbuffers[0], acquired.image);
+                try renderer.recordClearImage(
+                    &device,
+                    commandbuffers[0],
+                    acquired.image,
+                    std.time.nanoTimestamp(),
+                );
 
                 try device.queueSubmit(queue, 1, &.{.{
                     .wait_semaphore_count = 1,

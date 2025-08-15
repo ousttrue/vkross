@@ -1,6 +1,23 @@
+const std = @import("std");
 const vk = @import("vulkan");
 
-pub fn recordClearImage(device: *const vk.DeviceProxy, cb: vk.CommandBuffer, image: vk.Image) !void {
+fn colorForTime(now: i128) [4]f32 {
+    const elapsed1 = @as(f64, @floatFromInt(now)) / std.time.ns_per_s;
+
+    return .{
+        0,
+        @floatCast((std.math.sin(elapsed1 * std.math.pi) + 1) * 0.5),
+        0,
+        1,
+    };
+}
+
+pub fn recordClearImage(
+    device: *const vk.DeviceProxy,
+    cb: vk.CommandBuffer,
+    image: vk.Image,
+    nano_timestamp: i128,
+) !void {
     const sub = vk.ImageSubresourceRange{
         .aspect_mask = .{ .color_bit = true },
         .layer_count = 1,
@@ -38,7 +55,7 @@ pub fn recordClearImage(device: *const vk.DeviceProxy, cb: vk.CommandBuffer, ima
         image,
         .transfer_dst_optimal,
         &.{
-            .float_32 = .{ 0, 1, 0, 0 },
+            .float_32 = colorForTime(nano_timestamp),
         },
         1,
         @ptrCast(&sub),

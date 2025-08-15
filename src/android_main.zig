@@ -1,9 +1,13 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const constants = @import("constants.generated.zig");
+const vk = @import("vulkan");
 const c = @import("c_android.zig");
 const DynamicLoader = @import("DynamicLoader_android.zig");
 const InstanceManager = @import("InstanceManager.zig");
+const DeviceManager = @import("DeviceManager.zig");
+const Swapchain = @import("Swapchain.zig");
+const renderer = @import("renderer.zig");
 
 extern fn call_souce_process(state: *c.android_app, s: *c.android_poll_source) void;
 
@@ -56,7 +60,6 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     const allocator = gpa.allocator();
 
     // _ = app;
-    _ = userdata;
     std.log.info("## main_loop", .{});
 
     //
@@ -76,46 +79,127 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     const surface = try instance.createAndroidSurfaceKHR(&.{
         .window = @ptrCast(app.window),
     }, null);
+    const picked = try instance_manager.pickPhysicalDevice(&instance, surface) orelse {
+        return error.NoSutablePhysicalDevice;
+    };
+    const format = try Swapchain.chooseSwapSurfaceFormat(
+        allocator,
+        &instance,
+        picked.physical_device.physical_device,
+        surface,
+    );
 
-    const picked = try instance_manager.pickPhysicalDevice(&instance, surface);
-    _ = picked;
+    var device_manager = DeviceManager.init(
+        allocator,
+    );
+    defer device_manager.deinit();
+    const device_extensions = [_][*:0]const u8{vk.extensions.khr_swapchain.name};
+    const device = try device_manager.create(
+        &instance,
+        picked.physical_device.physical_device,
+        picked.graphics_queue_family_index,
+        picked.present_queue_family_index,
+        &device_extensions,
+    );
+    const queue = device.getDeviceQueue(picked.graphics_queue_family_index, 0);
 
-    //   // vuloxr::vk::Surface surface(instance, _surface, picked.physicalDevice);
-    //
-    //   vuloxr::vk::Device device;
-    //   device.layers = instance.layers;
-    //   device.addExtension(*physicalDevice, "VK_KHR_swapchain");
-    //   vuloxr::vk::CheckVkResult(device.create(instance, *physicalDevice,
-    //                                           physicalDevice.graphicsFamilyIndex));
-    //
-    //   vuloxr::vk::Swapchain swapchain(instance, surface, *physicalDevice,
-    //                                   *presentFamily, device, device.queueFamily);
-    //   swapchain.create();
-    //
-    //   main_loop(
-    //       [userdata, app]().std::optional<vuloxr::gui::WindowState> {
-    //         while (true) {
-    //           if (!userdata._active) {
-    //             return {};
-    //           }
-    //
-    //           struct android_poll_source *source;
-    //           int events;
-    //           if (ALooper_pollOnce(
-    //                   // timeout 0 for vulkan animation
-    //                   0, nullptr, &events, (void **)&source) < 0) {
-    //             return vuloxr::gui::WindowState{};
-    //           }
-    //           if (source) {
-    //             source.process(app, source);
-    //           }
-    //           if (app.destroyRequested) {
-    //             return {};
-    //           }
-    //         }
-    //       },
-    //       instance, swapchain, *physicalDevice, device, nullptr);
-    //
+    var swapchain = try Swapchain.init(
+        allocator,
+        &instance,
+        surface,
+        picked.graphics_queue_family_index,
+        picked.present_queue_family_index,
+        picked.physical_device.physical_device,
+        &device,
+        format,
+        .{ .inherit_bit_khr = true },
+    );
+    defer swapchain.deinit();
+
+    // frame resource
+    const acquired_semaphore = try device.createSemaphore(&.{}, null);
+    defer device.destroySemaphore(acquired_semaphore, null);
+
+    const submit_fence = try device.createFence(&.{
+        // .flags = .{ .signaled_bit = true },
+    }, null);
+    defer device.destroyFence(submit_fence, null);
+
+    const pool = try device.createCommandPool(&.{
+        .queue_family_index = picked.graphics_queue_family_index,
+        .flags = .{ .reset_command_buffer_bit = true },
+    }, null);
+    defer device.destroyCommandPool(pool, null);
+
+    var commandbuffers: [1]vk.CommandBuffer = undefined;
+    try device.allocateCommandBuffers(&.{
+        .command_pool = pool,
+        .level = .primary,
+        .command_buffer_count = 1,
+    }, &commandbuffers);
+    defer device.freeCommandBuffers(pool, 1, &commandbuffers);
+
+    var is_running = true;
+    while (is_running) {
+        while (true) {
+            // process all event
+            if (!userdata._active) {
+                is_running = false;
+                break;
+            }
+
+            var source: ?*c.android_poll_source = null;
+            // timeout 0 for vulkan animation
+            const result = c.ALooper_pollOnce(0, null, null, @ptrCast(&source));
+            if (result < 0) {
+                break;
+            }
+
+            if (source) |s| {
+                call_souce_process(app, s);
+            }
+            if (app.destroyRequested != 0) {
+                is_running = false;
+                break;
+            }
+        }
+
+        const acquired = try swapchain.acquireNextImage(acquired_semaphore);
+        if (acquired.result != .success) {
+            // TODO: resize swapchain
+            std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
+            break;
+        } else {
+            try renderer.recordClearImage(
+                &device,
+                commandbuffers[0],
+                acquired.image,
+                std.time.nanoTimestamp(),
+            );
+
+            try device.queueSubmit(queue, 1, &.{.{
+                .wait_semaphore_count = 1,
+                .p_wait_semaphores = @ptrCast(&acquired_semaphore),
+                .p_wait_dst_stage_mask = &.{.{
+                    .transfer_bit = true,
+                    .color_attachment_output_bit = true,
+                }},
+                .command_buffer_count = 1,
+                .p_command_buffers = &commandbuffers,
+            }}, submit_fence);
+            _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
+            try device.resetFences(1, @ptrCast(&submit_fence));
+
+            const res = try swapchain.present(acquired.image_index, &.{});
+            if (res != .success) {
+                std.log.warn("present: {s}", .{@tagName(res)});
+            }
+        }
+
+        // wait
+        // std.Thread.sleep(std.time.ns_per_ms * 16);
+    }
+
     return true;
 }
 
@@ -129,23 +213,23 @@ const UserData = struct {
         var userdata: *UserData = @ptrCast(@alignCast(pApp.*.userData orelse @panic("no userData")));
         switch (cmd) {
             c.APP_CMD_RESUME => {
-                std.log.debug("# APP_CMD_RESUME", .{});
+                std.log.debug("onAppCmd: APP_CMD_RESUME", .{});
                 userdata._active = true;
             },
             c.APP_CMD_INIT_WINDOW => {
-                std.log.debug("# APP_CMD_INIT_WINDOW", .{});
+                std.log.debug("onAppCmd: APP_CMD_INIT_WINDOW", .{});
                 userdata._window = pApp.*.window;
             },
             c.APP_CMD_PAUSE => {
-                std.log.debug("# APP_CMD_PAUSE", .{});
+                std.log.debug("onAppCmd: APP_CMD_PAUSE", .{});
                 userdata._active = false;
             },
             c.APP_CMD_TERM_WINDOW => {
-                std.log.debug("# APP_CMD_TERM_WINDOW", .{});
+                std.log.debug("onAppCmd: APP_CMD_TERM_WINDOW", .{});
                 userdata._window = null;
             },
             else => {
-                std.log.debug("# {}: not handled", .{cmd});
+                std.log.debug("onAppCmd: {}: not handled", .{cmd});
             },
         }
     }

@@ -7,6 +7,37 @@ swapchain: vk.SwapchainKHR,
 images: []vk.Image,
 present_queue: vk.Queue,
 
+pub fn chooseSwapSurfaceFormat(
+    allocator: std.mem.Allocator,
+    instance: *const vk.InstanceProxy,
+    physical_device: vk.PhysicalDevice,
+    surface: vk.SurfaceKHR,
+) !vk.SurfaceFormatKHR {
+    const formats = try instance.getPhysicalDeviceSurfaceFormatsAllocKHR(physical_device, surface, allocator);
+    defer allocator.free(formats);
+    if (formats.len == 0) {
+        return error.NoFormats;
+    }
+    const requestSurfaceImageFormat = [_]vk.Format{
+        // Favor UNORM formats as the samples are not written for sRGB
+        .b8g8r8a8_unorm, .r8g8b8a8_unorm,
+        .b8g8r8_unorm,
+        .r8g8b8_unorm,
+        // VK_FORMAT_A8B8G8R8_UNORM_PACK32
+        // VK_FORMAT_B8G8R8A8_SRGB,
+    };
+    for (formats) |availableFormat| {
+        if (availableFormat.color_space == .srgb_nonlinear_khr) {
+            for (requestSurfaceImageFormat) |format| {
+                if (availableFormat.format == format) {
+                    return availableFormat;
+                }
+            }
+        }
+    }
+    return formats[0];
+}
+
 pub fn init(
     allocator: std.mem.Allocator,
     vkp_instance: *const vk.InstanceProxy,
@@ -15,16 +46,13 @@ pub fn init(
     present_queue_family_index: u32,
     physical_device: vk.PhysicalDevice,
     device: *const vk.DeviceProxy,
+    format: vk.SurfaceFormatKHR,
+    composite_alpha: vk.CompositeAlphaFlagsKHR,
 ) !@This() {
     const surface_capabilities = try vkp_instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
         physical_device,
         surface,
     );
-
-    const preferred = vk.SurfaceFormatKHR{
-        .format = .b8g8r8a8_srgb,
-        .color_space = .srgb_nonlinear_khr,
-    };
 
     const qfi = [_]u32{
         queue_family_index,
@@ -39,8 +67,8 @@ pub fn init(
     const swapchain = try device.createSwapchainKHR(&.{
         .surface = surface,
         .min_image_count = surface_capabilities.min_image_count,
-        .image_format = preferred.format,
-        .image_color_space = preferred.color_space,
+        .image_format = format.format,
+        .image_color_space = format.color_space,
         .image_extent = surface_capabilities.current_extent,
         .image_array_layers = 1,
         .image_usage = .{ .color_attachment_bit = true, .transfer_dst_bit = true },
@@ -48,7 +76,7 @@ pub fn init(
         .queue_family_index_count = qfi.len,
         .p_queue_family_indices = &qfi,
         .pre_transform = surface_capabilities.current_transform,
-        .composite_alpha = .{ .opaque_bit_khr = true },
+        .composite_alpha = composite_alpha,
         .present_mode = .fifo_khr,
         .clipped = vk.TRUE,
     }, null);
