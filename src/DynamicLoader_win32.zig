@@ -1,6 +1,7 @@
 // https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/snippets/DynamicLoader.hpp
 const std = @import("std");
 const builtin = @import("builtin");
+const vk = @import("vulkan");
 const c = @cImport({
     @cDefine("WIN32_LEAN_AND_MEAN", {});
     @cInclude("Windows.h");
@@ -22,6 +23,6 @@ pub fn deinit(self: *@This()) void {
     c.FreeLibrary(self.library);
 }
 
-pub fn getProcAddress(self: @This(), function: *const u8) ?*anyopaque {
-    return @ptrCast(@constCast(c.GetProcAddress(self.library, function)));
+pub fn getProcAddress(self: @This(), function: [*:0]const u8) vk.PfnVoidFunction {
+    return @ptrCast(@alignCast(@constCast(c.GetProcAddress(self.library, function))));
 }
