@@ -56,7 +56,7 @@ pub fn logFn(
 var g_loader: *const vkross.DynamicLoader = undefined;
 
 fn getProcAddress(_: anytype, name: [*:0]const u8) vk.PfnVoidFunction {
-    return g_loader.getProcAddress(name);
+    return @ptrCast(@alignCast(g_loader.getProcAddress(name)));
 }
 
 fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {

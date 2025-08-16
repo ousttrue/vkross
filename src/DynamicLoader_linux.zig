@@ -1,7 +1,6 @@
 // https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/snippets/DynamicLoader.hpp
 const std = @import("std");
 const builtin = @import("builtin");
-const vk = @import("vulkan");
 const c = @cImport({
     @cInclude("dlfcn.h");
 });
@@ -23,6 +22,6 @@ pub fn deinit(self: *@This()) void {
     c.dlclose(self.library);
 }
 
-pub fn getProcAddress(self: @This(), function: [*:0]const u8) vk.PfnVoidFunction {
-    return @ptrCast(@alignCast(c.dlsym(self.library, function)));
+pub fn getProcAddress(self: @This(), function: [*:0]const u8) ?*anyopaque {
+    return c.dlsym(self.library, function);
 }

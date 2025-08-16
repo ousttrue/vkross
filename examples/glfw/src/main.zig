@@ -62,7 +62,7 @@ pub fn logFn(
 var g_loader: *const vkross.DynamicLoader = undefined;
 
 fn getProcAddress(_: anytype, name: [*:0]const u8) vk.PfnVoidFunction {
-    return g_loader.getProcAddress(name);
+    return @ptrCast(g_loader.getProcAddress(name));
 }
 
 fn getGlfwFramebufferExtent(window: *c.GLFWwindow) vk.Extent2D {
