@@ -1,7 +1,9 @@
 // https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/snippets/DynamicLoader.hpp
 const std = @import("std");
 const builtin = @import("builtin");
-const c = @import("c_android.zig");
+const c = @cImport({
+    @cInclude("dlfcn.h");
+});
 
 const library_name = "libvulkan.so";
 // const library_name = "libvulkan.so.1";

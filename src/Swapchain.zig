@@ -2,10 +2,18 @@ const std = @import("std");
 const vk = @import("vulkan");
 
 allocator: std.mem.Allocator,
+instance: *const vk.InstanceProxy,
+surface: vk.SurfaceKHR,
+physical_device: vk.PhysicalDevice,
 device: *const vk.DeviceProxy,
-swapchain: vk.SwapchainKHR,
-images: []vk.Image,
 present_queue: vk.Queue,
+qfi: [2]u32,
+create_info: vk.SwapchainCreateInfoKHR,
+
+current: ?struct {
+    swapchain: vk.SwapchainKHR,
+    images: []vk.Image,
+} = null,
 
 pub fn chooseSwapSurfaceFormat(
     allocator: std.mem.Allocator,
@@ -40,69 +48,53 @@ pub fn chooseSwapSurfaceFormat(
 
 pub fn init(
     allocator: std.mem.Allocator,
-    vkp_instance: *const vk.InstanceProxy,
+    instance: *const vk.InstanceProxy,
     surface: vk.SurfaceKHR,
+    physical_device: vk.PhysicalDevice,
     queue_family_index: u32,
     present_queue_family_index: u32,
-    physical_device: vk.PhysicalDevice,
     device: *const vk.DeviceProxy,
     format: vk.SurfaceFormatKHR,
     composite_alpha: vk.CompositeAlphaFlagsKHR,
 ) !@This() {
-    const surface_capabilities = try vkp_instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
-        physical_device,
-        surface,
-    );
-
-    const qfi = [_]u32{
-        queue_family_index,
-        present_queue_family_index,
-    };
-
     const sharing_mode: vk.SharingMode = if (queue_family_index != present_queue_family_index)
         .concurrent
     else
         .exclusive;
 
-    const swapchain = try device.createSwapchainKHR(&.{
-        .surface = surface,
-        .min_image_count = surface_capabilities.min_image_count,
-        .image_format = format.format,
-        .image_color_space = format.color_space,
-        .image_extent = surface_capabilities.current_extent,
-        .image_array_layers = 1,
-        .image_usage = .{ .color_attachment_bit = true, .transfer_dst_bit = true },
-        .image_sharing_mode = sharing_mode,
-        .queue_family_index_count = qfi.len,
-        .p_queue_family_indices = &qfi,
-        .pre_transform = surface_capabilities.current_transform,
-        .composite_alpha = composite_alpha,
-        .present_mode = .fifo_khr,
-        .clipped = vk.TRUE,
-    }, null);
-
-    var image_count: u32 = undefined;
-    _ = try device.getSwapchainImagesKHR(swapchain, &image_count, null);
-    if (image_count == 0) {
-        @panic("no swapchain image");
-    }
-    std.log.info("swapchain image: {}", .{image_count});
-
-    const images = try allocator.alloc(vk.Image, image_count);
-    _ = try device.getSwapchainImagesKHR(swapchain, &image_count, @ptrCast(images));
-
     return .{
         .allocator = allocator,
+        .instance = instance,
+        .surface = surface,
+        .physical_device = physical_device,
         .device = device,
-        .swapchain = swapchain,
-        .images = images,
         .present_queue = device.getDeviceQueue(present_queue_family_index, 0),
+        .qfi = [2]u32{
+            queue_family_index,
+            present_queue_family_index,
+        },
+        .create_info = .{
+            .surface = undefined,
+            .min_image_count = undefined,
+            .image_extent = undefined,
+            .pre_transform = undefined,
+            .image_format = format.format,
+            .image_color_space = format.color_space,
+            .image_array_layers = 1,
+            .image_usage = .{ .color_attachment_bit = true, .transfer_dst_bit = true },
+            .image_sharing_mode = sharing_mode,
+            .composite_alpha = composite_alpha,
+            .present_mode = .fifo_khr,
+            .clipped = vk.TRUE,
+        },
     };
 }
 
 pub fn deinit(self: @This()) void {
-    self.allocator.free(self.images);
-    self.device.destroySwapchainKHR(self.swapchain, null);
+    if (self.current) |current| {
+        self.allocator.free(current.images);
+        self.device.destroySwapchainKHR(current.swapchain, null);
+    }
 }
 
 pub const AcquiredImage = struct {
@@ -112,37 +104,98 @@ pub const AcquiredImage = struct {
     image: vk.Image = .null_handle,
 };
 
-pub fn acquireNextImage(
+pub fn acquireNextImageOrCreate(
     self: *@This(),
     image_available_semaphore: vk.Semaphore,
-) !AcquiredImage {
-    // uint32_t imageIndex;
-    const acquired = try self.device.acquireNextImageKHR(
-        self.swapchain,
-        std.math.maxInt(u64),
-        image_available_semaphore,
-        .null_handle,
-    );
-    if (acquired.result != .success) {
+    extent: vk.Extent2D,
+) !?AcquiredImage {
+    if (self.current) |current| {
+        // uint32_t imageIndex;
+        const acquired = try self.device.acquireNextImageKHR(
+            current.swapchain,
+            std.math.maxInt(u64),
+            image_available_semaphore,
+            .null_handle,
+        );
+        if (acquired.result != .success) {
+            return .{
+                .result = acquired.result,
+            };
+        }
+
         return .{
             .result = acquired.result,
+            .present_time = try std.time.Instant.now(),
+            .image_index = acquired.image_index,
+            .image = current.images[acquired.image_index],
         };
-    }
+    } else {
+        const surface_capabilities = try self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+            self.physical_device,
+            self.surface,
+        );
 
-    return .{
-        .result = acquired.result,
-        .present_time = try std.time.Instant.now(),
-        .image_index = acquired.image_index,
-        .image = self.images[acquired.image_index],
-    };
+        self.create_info.surface = self.surface;
+        self.create_info.min_image_count = surface_capabilities.min_image_count;
+        self.create_info.queue_family_index_count = self.qfi.len;
+        self.create_info.p_queue_family_indices = &self.qfi;
+        self.create_info.pre_transform = surface_capabilities.current_transform;
+
+        if (surface_capabilities.current_extent.width == 0xFFFFFFFF) {
+            self.create_info.image_extent = extent;
+        } else {
+            self.create_info.image_extent = surface_capabilities.current_extent;
+        }
+
+        const swapchain = try self.device.createSwapchainKHR(&self.create_info, null);
+
+        var image_count: u32 = undefined;
+        _ = try self.device.getSwapchainImagesKHR(swapchain, &image_count, null);
+        if (image_count == 0) {
+            @panic("no swapchain image");
+        }
+        std.log.info("swapchain created {} x {}. {} images", .{
+            self.create_info.image_extent.width,
+            self.create_info.image_extent.height,
+            image_count,
+        });
+
+        const images = try self.allocator.alloc(vk.Image, image_count);
+        _ = try self.device.getSwapchainImagesKHR(swapchain, &image_count, @ptrCast(images));
+
+        self.current = .{
+            .swapchain = swapchain,
+            .images = images,
+        };
+        if (self.create_info.old_swapchain != .null_handle) {
+            self.device.destroySwapchainKHR(self.create_info.old_swapchain, null);
+            self.create_info.old_swapchain = .null_handle;
+        }
+
+        return null;
+    }
 }
 
-pub fn present(self: @This(), imageIndex: u32, semaphores: []vk.Semaphore) !vk.Result {
-    return self.device.queuePresentKHR(self.present_queue, &.{
+pub fn present(self: *@This(), imageIndex: u32, semaphores: []vk.Semaphore) !void {
+    const current = self.current orelse return error.NoCurrentSwapchain;
+    const result = try self.device.queuePresentKHR(self.present_queue, &.{
         .swapchain_count = 1,
-        .p_swapchains = @ptrCast(&self.swapchain),
+        .p_swapchains = @ptrCast(&current.swapchain),
         .p_image_indices = @ptrCast(&imageIndex),
         .wait_semaphore_count = @intCast(semaphores.len),
         .p_wait_semaphores = @ptrCast(semaphores),
     });
+    switch (result) {
+        .success => return,
+        .suboptimal_khr => {
+            // clear current
+            self.create_info.old_swapchain = current.swapchain;
+            self.allocator.free(current.images);
+            self.current = null;
+        },
+        else => {
+            std.log.err("queuePresentKHR: {s}", .{@tagName(result)});
+            @panic("queuePresentKHR");
+        },
+    }
 }

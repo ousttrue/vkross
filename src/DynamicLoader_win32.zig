@@ -1,7 +1,10 @@
 // https://github.com/KhronosGroup/Vulkan-Hpp/blob/main/snippets/DynamicLoader.hpp
 const std = @import("std");
 const builtin = @import("builtin");
-const c = @import("c.zig");
+const c = @cImport({
+    @cDefine("WIN32_LEAN_AND_MEAN", {});
+    @cInclude("Windows.h");
+});
 
 const library_name = "vulkan-1.dll";
 

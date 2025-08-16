@@ -99,7 +99,7 @@ pub fn build(b: *std.Build) void {
             .root_source_file = b.path("src/main.zig"),
         });
         exe.step.dependOn(&constants.step);
-        build_glfw.link(b, exe);
+        build_glfw.link(b, target, exe);
         exe.root_module.addImport("vulkan", vulkan);
 
         const run_cmd = b.addRunArtifact(exe);
@@ -109,7 +109,6 @@ pub fn build(b: *std.Build) void {
         }
         const run_step = b.step("run", "Run the app");
         run_step.dependOn(&run_cmd.step);
-
         b.installArtifact(exe);
     }
 }

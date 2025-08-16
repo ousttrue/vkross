@@ -7,7 +7,10 @@ const InstanceManager = @import("InstanceManager.zig");
 const DeviceManager = @import("DeviceManager.zig");
 const Swapchain = @import("Swapchain.zig");
 const renderer = @import("renderer.zig");
-const DynamicLoader = @import("DynamicLoader.zig");
+const DynamicLoader = if (builtin.target.os.tag == .windows)
+    @import("DynamicLoader_win32.zig")
+else
+    @import("DynamicLoader_linux.zig");
 
 pub extern fn glfwCreateWindowSurface(
     instance: vk.Instance,
@@ -66,6 +69,13 @@ fn getProcAddress(_: anytype, name: [*:0]const u8) ?*anyopaque {
     return g_loader.getProcAddress(@ptrCast(name));
 }
 
+fn getExtent(window: *c.GLFWwindow) vk.Extent2D {
+    var w: c_int = undefined;
+    var h: c_int = undefined;
+    c.glfwGetFramebufferSize(window, &w, &h);
+    return .{ .width = @intCast(w), .height = @intCast(h) };
+}
+
 pub fn main() !void {
     const loader = DynamicLoader.init(.{});
     g_loader = &loader;
@@ -87,11 +97,10 @@ pub fn main() !void {
         return error.NoVulkan;
     }
 
-    const extent = vk.Extent2D{ .width = 800, .height = 600 };
     c.glfwWindowHint(c.GLFW_CLIENT_API, c.GLFW_NO_API);
     const window = c.glfwCreateWindow(
-        @intCast(extent.width),
-        @intCast(extent.height),
+        @intCast(800),
+        @intCast(600),
         constants.appname,
         null,
         null,
@@ -147,14 +156,17 @@ pub fn main() !void {
         allocator,
         &instance,
         surface,
+        picked.physical_device.physical_device,
         picked.graphics_queue_family_index,
         picked.present_queue_family_index,
-        picked.physical_device.physical_device,
         &device,
         format,
         .{ .opaque_bit_khr = true },
     );
     defer swapchain.deinit();
+    // &instance,
+    // surface,
+    // picked.physical_device.physical_device,
 
     // frame resource
     const acquired_semaphore = try device.createSemaphore(&.{}, null);
@@ -181,44 +193,44 @@ pub fn main() !void {
 
     while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
         c.glfwPollEvents();
-        var w: c_int = undefined;
-        var h: c_int = undefined;
-        c.glfwGetFramebufferSize(window, &w, &h);
+        const extent = getExtent(window);
 
         // Don't present or resize swapchain while the window is minimized
-        if (w != 0 and h != 0) {
-            const acquired = try swapchain.acquireNextImage(acquired_semaphore);
-            if (acquired.result != .success) {
-                // TODO: resize swapchain
-                std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
-                break;
-            } else {
-                try renderer.recordClearImage(
-                    &device,
-                    commandbuffers[0],
-                    acquired.image,
-                    std.time.nanoTimestamp(),
-                );
+        if (extent.width != 0 and extent.height != 0) {
+            if (try swapchain.acquireNextImageOrCreate(
+                acquired_semaphore,
+                extent,
+            )) |acquired| {
+                if (acquired.result != .success) {
+                    // TODO: resize swapchain
+                    std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
+                    break;
+                } else {
+                    try renderer.recordClearImage(
+                        &device,
+                        commandbuffers[0],
+                        acquired.image,
+                        std.time.nanoTimestamp(),
+                    );
 
-                try device.queueSubmit(queue, 1, &.{.{
-                    .wait_semaphore_count = 1,
-                    .p_wait_semaphores = @ptrCast(&acquired_semaphore),
-                    .p_wait_dst_stage_mask = &.{.{
-                        .transfer_bit = true,
-                        .color_attachment_output_bit = true,
-                    }},
-                    .command_buffer_count = 1,
-                    .p_command_buffers = &commandbuffers,
-                }}, submit_fence);
-                _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
-                try device.resetFences(1, @ptrCast(&submit_fence));
+                    try device.queueSubmit(queue, 1, &.{.{
+                        .wait_semaphore_count = 1,
+                        .p_wait_semaphores = @ptrCast(&acquired_semaphore),
+                        .p_wait_dst_stage_mask = &.{.{
+                            .transfer_bit = true,
+                            .color_attachment_output_bit = true,
+                        }},
+                        .command_buffer_count = 1,
+                        .p_command_buffers = &commandbuffers,
+                    }}, submit_fence);
+                    _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
+                    try device.resetFences(1, @ptrCast(&submit_fence));
 
-                const res = try swapchain.present(acquired.image_index, &.{});
-                if (res != .success) {
-                    std.log.warn("present: {s}", .{@tagName(res)});
+                    try swapchain.present(acquired.image_index, &.{});
                 }
             }
 
+            // TODO: vsync
             // wait
             std.Thread.sleep(std.time.ns_per_ms * 16);
         }

@@ -7,7 +7,6 @@ pub usingnamespace @cImport({
     @cInclude("android/set_abort_message.h");
     @cInclude("android_native_app_glue.h");
     // #include <jni.h>
-    @cInclude("dlfcn.h");
 });
 
 const vk = @import("vulkan");
