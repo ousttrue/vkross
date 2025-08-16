@@ -5,7 +5,7 @@ const constants = @import("constants.generated.zig");
 const c = @import("c.zig");
 const InstanceManager = @import("InstanceManager.zig");
 const DeviceManager = @import("DeviceManager.zig");
-const Swapchain = @import("Swapchain.zig");
+const SwapchainManager = @import("SwapchainManager.zig");
 const renderer = @import("renderer.zig");
 const DynamicLoader = if (builtin.target.os.tag == .windows)
     @import("DynamicLoader_win32.zig")
@@ -69,7 +69,7 @@ fn getProcAddress(_: anytype, name: [*:0]const u8) ?*anyopaque {
     return g_loader.getProcAddress(@ptrCast(name));
 }
 
-fn getExtent(window: *c.GLFWwindow) vk.Extent2D {
+fn getGlfwFramebufferExtent(window: *c.GLFWwindow) vk.Extent2D {
     var w: c_int = undefined;
     var h: c_int = undefined;
     c.glfwGetFramebufferSize(window, &w, &h);
@@ -131,7 +131,7 @@ pub fn main() !void {
     const picked = try instance_manager.pickPhysicalDevice(&instance, surface) orelse {
         return error.NoSuitablePhysicalDevice;
     };
-    const format = try Swapchain.chooseSwapSurfaceFormat(
+    const format = try SwapchainManager.chooseSwapSurfaceFormat(
         allocator,
         &instance,
         picked.physical_device.physical_device,
@@ -152,7 +152,7 @@ pub fn main() !void {
     );
     const queue = device.getDeviceQueue(picked.graphics_queue_family_index, 0);
 
-    var swapchain = try Swapchain.init(
+    var swapchain = try SwapchainManager.init(
         allocator,
         &instance,
         surface,
@@ -164,9 +164,6 @@ pub fn main() !void {
         .{ .opaque_bit_khr = true },
     );
     defer swapchain.deinit();
-    // &instance,
-    // surface,
-    // picked.physical_device.physical_device,
 
     // frame resource
     const acquired_semaphore = try device.createSemaphore(&.{}, null);
@@ -193,47 +190,47 @@ pub fn main() !void {
 
     while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
         c.glfwPollEvents();
-        const extent = getExtent(window);
-
-        // Don't present or resize swapchain while the window is minimized
-        if (extent.width != 0 and extent.height != 0) {
-            if (try swapchain.acquireNextImageOrCreate(
-                acquired_semaphore,
-                extent,
-            )) |acquired| {
-                if (acquired.result != .success) {
-                    // TODO: resize swapchain
-                    std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
-                    break;
-                } else {
-                    try renderer.recordClearImage(
-                        &device,
-                        commandbuffers[0],
-                        acquired.image,
-                        std.time.nanoTimestamp(),
-                    );
-
-                    try device.queueSubmit(queue, 1, &.{.{
-                        .wait_semaphore_count = 1,
-                        .p_wait_semaphores = @ptrCast(&acquired_semaphore),
-                        .p_wait_dst_stage_mask = &.{.{
-                            .transfer_bit = true,
-                            .color_attachment_output_bit = true,
-                        }},
-                        .command_buffer_count = 1,
-                        .p_command_buffers = &commandbuffers,
-                    }}, submit_fence);
-                    _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
-                    try device.resetFences(1, @ptrCast(&submit_fence));
-
-                    try swapchain.present(acquired.image_index, &.{});
-                }
-            }
-
-            // TODO: vsync
-            // wait
-            std.Thread.sleep(std.time.ns_per_ms * 16);
+        const extent = getGlfwFramebufferExtent(window);
+        if (extent.width == 0 or extent.height == 0) {
+            // Don't present or resize swapchain while the window is minimized
+            continue;
         }
+
+        if (try swapchain.acquireNextImageOrCreate(
+            acquired_semaphore,
+            extent,
+        )) |acquired| {
+            if (acquired.result != .success) {
+                // TODO: resize swapchain
+                std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
+                break;
+            } else {
+                try renderer.recordClearImage(
+                    &device,
+                    commandbuffers[0],
+                    acquired.image,
+                    std.time.nanoTimestamp(),
+                );
+
+                try device.queueSubmit(queue, 1, &.{.{
+                    .wait_semaphore_count = 1,
+                    .p_wait_semaphores = @ptrCast(&acquired_semaphore),
+                    .p_wait_dst_stage_mask = &.{.{
+                        .transfer_bit = true,
+                        .color_attachment_output_bit = true,
+                    }},
+                    .command_buffer_count = 1,
+                    .p_command_buffers = &commandbuffers,
+                }}, submit_fence);
+                _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
+                try device.resetFences(1, @ptrCast(&submit_fence));
+
+                try swapchain.present(acquired.image_index, &.{});
+            }
+        }
+
+        // TODO: vsync
+        std.Thread.sleep(std.time.ns_per_ms * 16);
     }
 
     try device.deviceWaitIdle();
