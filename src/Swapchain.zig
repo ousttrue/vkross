@@ -178,24 +178,38 @@ pub fn acquireNextImageOrCreate(
 
 pub fn present(self: *@This(), imageIndex: u32, semaphores: []vk.Semaphore) !void {
     const current = self.current orelse return error.NoCurrentSwapchain;
-    const result = try self.device.queuePresentKHR(self.present_queue, &.{
+    if (self.device.queuePresentKHR(self.present_queue, &.{
         .swapchain_count = 1,
         .p_swapchains = @ptrCast(&current.swapchain),
         .p_image_indices = @ptrCast(&imageIndex),
         .wait_semaphore_count = @intCast(semaphores.len),
         .p_wait_semaphores = @ptrCast(semaphores),
-    });
-    switch (result) {
-        .success => return,
-        .suboptimal_khr => {
-            // clear current
-            self.create_info.old_swapchain = current.swapchain;
-            self.allocator.free(current.images);
-            self.current = null;
-        },
-        else => {
-            std.log.err("queuePresentKHR: {s}", .{@tagName(result)});
-            @panic("queuePresentKHR");
-        },
+    })) |res| {
+        switch (res) {
+            .success => {},
+            .suboptimal_khr => {
+                // clear current
+                self.create_info.old_swapchain = current.swapchain;
+                self.allocator.free(current.images);
+                self.current = null;
+            },
+            else => {
+                std.log.err("queuePresentKHR: {s}", .{@tagName(res)});
+                @panic("queuePresentKHR");
+            },
+        }
+    } else |err| {
+        switch (err) {
+            error.OutOfDateKHR => {
+                // clear current
+                self.create_info.old_swapchain = current.swapchain;
+                self.allocator.free(current.images);
+                self.current = null;
+            },
+            else => {
+                std.log.err("queuePresentKHR: {s}", .{@errorName(err)});
+                @panic("queuePresentKHR");
+            },
+        }
     }
 }
