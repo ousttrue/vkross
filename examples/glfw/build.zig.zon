@@ -1,0 +1,18 @@
+.{
+    .name = .vulkancross,
+    .version = "0.0.0",
+    .fingerprint = 0xd4a863828a6170d2, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        .vkross = .{ .path = "../.." },
+        .glfw = .{
+            .url = "https://github.com/glfw/glfw/archive/refs/tags/3.4.zip",
+            .hash = "N-V-__8AAL40TADEbrysYHBl-UIZO4KiG4chP8pLDVDINGH4",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

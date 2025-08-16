@@ -1,16 +1,12 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const vk = @import("vulkan");
+const vkross = @import("vkross");
+const vk = vkross.vk;
 const constants = @import("constants.generated.zig");
-const c = @import("c.zig");
-const InstanceManager = @import("InstanceManager.zig");
-const DeviceManager = @import("DeviceManager.zig");
-const SwapchainManager = @import("SwapchainManager.zig");
-const renderer = @import("renderer.zig");
-const DynamicLoader = if (builtin.target.os.tag == .windows)
-    @import("DynamicLoader_win32.zig")
-else
-    @import("DynamicLoader_linux.zig");
+const c = @cImport({
+    @cDefine("GLFW_INCLUDE_NONE", {});
+    @cInclude("GLFW/glfw3.h");
+});
 
 pub extern fn glfwCreateWindowSurface(
     instance: vk.Instance,
@@ -63,7 +59,7 @@ pub fn logFn(
     }
 }
 
-var g_loader: *const DynamicLoader = undefined;
+var g_loader: *const vkross.DynamicLoader = undefined;
 
 fn getProcAddress(_: anytype, name: [*:0]const u8) ?*anyopaque {
     return g_loader.getProcAddress(@ptrCast(name));
@@ -77,7 +73,7 @@ fn getGlfwFramebufferExtent(window: *c.GLFWwindow) vk.Extent2D {
 }
 
 pub fn main() !void {
-    const loader = DynamicLoader.init(.{});
+    const loader = vkross.DynamicLoader.init(.{});
     g_loader = &loader;
 
     std.log.debug("debug", .{});
@@ -111,7 +107,7 @@ pub fn main() !void {
     // init vulkan
     //
     // var instance_manager = InstanceManager.init(allocator, c.glfwGetInstanceProcAddress);
-    var instance_manager = InstanceManager.init(allocator, &getProcAddress);
+    var instance_manager = vkross.InstanceManager.init(allocator, &getProcAddress);
     defer instance_manager.deinit();
     var glfw_exts_count: u32 = undefined;
     const glfw_instance_extensions = c.glfwGetRequiredInstanceExtensions(&glfw_exts_count);
@@ -131,14 +127,14 @@ pub fn main() !void {
     const picked = try instance_manager.pickPhysicalDevice(&instance, surface) orelse {
         return error.NoSuitablePhysicalDevice;
     };
-    const format = try SwapchainManager.chooseSwapSurfaceFormat(
+    const format = try vkross.SwapchainManager.chooseSwapSurfaceFormat(
         allocator,
         &instance,
         picked.physical_device.physical_device,
         surface,
     );
 
-    var device_manager = DeviceManager.init(
+    var device_manager = vkross.DeviceManager.init(
         allocator,
     );
     defer device_manager.deinit();
@@ -152,7 +148,7 @@ pub fn main() !void {
     );
     const queue = device.getDeviceQueue(picked.graphics_queue_family_index, 0);
 
-    var swapchain = try SwapchainManager.init(
+    var swapchain = try vkross.SwapchainManager.init(
         allocator,
         &instance,
         surface,
@@ -191,7 +187,7 @@ pub fn main() !void {
             break;
         }
 
-        try renderer.recordClearImage(
+        try vkross.renderer.recordClearImage(
             &device,
             acquired.command_buffer,
             acquired.image,

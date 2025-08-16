@@ -1,13 +1,18 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const constants = @import("constants.generated.zig");
-const vk = @import("vulkan");
-const c = @import("c_android.zig");
-const DynamicLoader = @import("DynamicLoader_linux.zig");
-const InstanceManager = @import("InstanceManager.zig");
-const DeviceManager = @import("DeviceManager.zig");
-const SwapchainManager = @import("SwapchainManager.zig");
-const renderer = @import("renderer.zig");
+const vkross = @import("vkross");
+const vk = vkross.vk;
+const c = @cImport({
+    @cInclude("EGL/egl.h");
+    @cInclude("GLES/gl.h");
+    @cInclude("android/choreographer.h");
+    @cInclude("android/log.h");
+    @cInclude("android/sensor.h");
+    @cInclude("android/set_abort_message.h");
+    @cInclude("android_native_app_glue.h");
+    // #include <jni.h>
+});
 
 extern fn call_souce_process(state: *c.android_app, s: *c.android_poll_source) void;
 
@@ -48,9 +53,10 @@ pub fn logFn(
     _ = c.__android_log_write(priority, "ZIG", &buf.buffer);
 }
 
-var g_loader: *const DynamicLoader = undefined;
+var g_loader: *const vkross.DynamicLoader = undefined;
 
-fn getProcAddress(_: anytype, name: [*:0]const u8) ?*c.VkPfn {
+pub const VkPfn = fn (*const anyopaque, ?*const anyopaque, *anyopaque) callconv(.c) c_int;
+fn getProcAddress(_: anytype, name: [*:0]const u8) ?*VkPfn {
     return @ptrCast(@alignCast(g_loader.getProcAddress(@ptrCast(name))));
 }
 
@@ -65,10 +71,10 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     //
     // init vulkan
     //
-    const loader = DynamicLoader.init(.{});
+    const loader = vkross.DynamicLoader.init(.{});
     g_loader = &loader;
 
-    var instance_manager = InstanceManager.init(allocator, getProcAddress);
+    var instance_manager = vkross.InstanceManager.init(allocator, getProcAddress);
     defer instance_manager.deinit();
     const instance = try instance_manager.create(.{
         .app_name = constants.appname,
@@ -82,14 +88,14 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     const picked = try instance_manager.pickPhysicalDevice(&instance, surface) orelse {
         return error.NoSutablePhysicalDevice;
     };
-    const format = try SwapchainManager.chooseSwapSurfaceFormat(
+    const format = try vkross.SwapchainManager.chooseSwapSurfaceFormat(
         allocator,
         &instance,
         picked.physical_device.physical_device,
         surface,
     );
 
-    var device_manager = DeviceManager.init(
+    var device_manager = vkross.DeviceManager.init(
         allocator,
     );
     defer device_manager.deinit();
@@ -103,7 +109,7 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     );
     const queue = device.getDeviceQueue(picked.graphics_queue_family_index, 0);
 
-    var swapchain = try SwapchainManager.init(
+    var swapchain = try vkross.SwapchainManager.init(
         allocator,
         &instance,
         surface,
@@ -151,8 +157,7 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
                 std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
                 break;
             } else {
-
-                try renderer.recordClearImage(
+                try vkross.renderer.recordClearImage(
                     &device,
                     acquired.command_buffer,
                     acquired.image,

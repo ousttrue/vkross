@@ -1,0 +1,26 @@
+.{
+    .name = .vulkancross,
+    .version = "0.0.0",
+    .fingerprint = 0xd4a863828a6170d2, // Changing this has security and trust implications.
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        .vkross = .{ .path = "../.." },
+        .android = .{
+            .url = "git+https://github.com/ousttrue/zig-android-sdk.git?ref=addLibrary#3092b02730672a90504809904a5f05c9e2fa18cb",
+            .hash = "android-0.1.0-7iz7QuXeAQAEJoUVh7OHiRdlPIZjsZ2B_Jkqa3slened",
+        },
+        .@"vulkan-validationlayers" = .{
+            .url = "https://github.com/KhronosGroup/Vulkan-ValidationLayers/releases/download/vulkan-sdk-1.4.313.0/android-binaries-1.4.313.0.zip",
+            .hash = "N-V-__8AAJw0VwVoIyuzLrXYjWtwDckHLzY_k7CQRovnUYsO",
+        },
+        .android = .{
+            .url = "git+https://github.com/ousttrue/zig-android-sdk.git?ref=addLibrary#3092b02730672a90504809904a5f05c9e2fa18cb",
+            .hash = "android-0.1.0-7iz7QuXeAQAEJoUVh7OHiRdlPIZjsZ2B_Jkqa3slened",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

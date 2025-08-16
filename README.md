@@ -10,8 +10,3 @@ vulkan cross platform(glfw and android)
 | glfw arch linux wayland | ok  |
 | android native-activity | ok  |
 
-## android
-
-```sh
-zig build -Dtarget=aarch64-linux-android
-```

@@ -1,3 +1,5 @@
 .zig-cache
 zig-out
 src/constants.generated.zig
+examples/glfw/src/constants.generated.zig
+examples/android/src/constants.generated.zig
