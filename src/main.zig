@@ -11,7 +11,6 @@ const DynamicLoader = if (builtin.target.os.tag == .windows)
     @import("DynamicLoader_win32.zig")
 else
     @import("DynamicLoader_linux.zig");
-const FlightManager = @import("FlightManager.zig");
 
 pub extern fn glfwCreateWindowSurface(
     instance: vk.Instance,
@@ -170,14 +169,6 @@ pub fn main() !void {
     const acquired_semaphore = try device.createSemaphore(&.{}, null);
     defer device.destroySemaphore(acquired_semaphore, null);
 
-    const flight_manager = try FlightManager.init(
-        allocator,
-        &device,
-        picked.graphics_queue_family_index,
-        swapchain.create_info.min_image_count,
-    );
-    defer flight_manager.deinit();
-
     while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
         c.glfwPollEvents();
         const extent = getGlfwFramebufferExtent(window);
@@ -200,11 +191,9 @@ pub fn main() !void {
             break;
         }
 
-        const flight = flight_manager.flights[acquired.image_index];
-
         try renderer.recordClearImage(
             &device,
-            flight.command_buffer,
+            acquired.command_buffer,
             acquired.image,
             std.time.nanoTimestamp(),
         );
@@ -217,10 +206,10 @@ pub fn main() !void {
                 .color_attachment_output_bit = true,
             }},
             .command_buffer_count = 1,
-            .p_command_buffers = @ptrCast(&flight.command_buffer),
-        }}, flight.submit_fence);
-        _ = try device.waitForFences(1, @ptrCast(&flight.submit_fence), vk.TRUE, std.math.maxInt(u64));
-        try device.resetFences(1, @ptrCast(&flight.submit_fence));
+            .p_command_buffers = @ptrCast(&acquired.command_buffer),
+        }}, acquired.submit_fence);
+        _ = try device.waitForFences(1, @ptrCast(&acquired.submit_fence), vk.TRUE, std.math.maxInt(u64));
+        try device.resetFences(1, @ptrCast(&acquired.submit_fence));
 
         try swapchain.present(acquired.image_index, &.{});
 

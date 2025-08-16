@@ -100,9 +100,11 @@ pub fn deinit(self: @This()) void {
 
 pub const AcquiredImage = struct {
     result: vk.Result,
-    present_time: std.time.Instant = undefined,
-    image_index: u32 = 0,
-    image: vk.Image = .null_handle,
+    present_time: std.time.Instant,
+    image_index: u32,
+    image: vk.Image,
+    command_buffer: vk.CommandBuffer,
+    submit_fence: vk.Fence,
 };
 
 pub fn acquireNextImageOrCreate(
@@ -121,14 +123,22 @@ pub fn acquireNextImageOrCreate(
         if (acquired.result != .success) {
             return .{
                 .result = acquired.result,
+                .present_time = undefined,
+                .image_index = 0,
+                .image = .null_handle,
+                .command_buffer = .null_handle,
+                .submit_fence = .null_handle,
             };
         }
 
+        const flight = current.flight_manager.flights[acquired.image_index];
         return .{
             .result = acquired.result,
             .present_time = try std.time.Instant.now(),
             .image_index = acquired.image_index,
             .image = current.images[acquired.image_index],
+            .command_buffer = flight.command_buffer,
+            .submit_fence = flight.submit_fence,
         };
     } else {
         self.create_info.surface = self.surface;
@@ -147,7 +157,7 @@ pub fn acquireNextImageOrCreate(
 
         const swapchain = try self.device.createSwapchainKHR(&self.create_info, null);
 
-        const current = try Swapchain.init(self.allocator, self.device, swapchain);
+        const current = try Swapchain.init(self.allocator, self.device, swapchain, self.qfi[0]);
         std.log.info("swapchain created {} x {}. {} images", .{
             self.create_info.image_extent.width,
             self.create_info.image_extent.height,
