@@ -196,38 +196,41 @@ pub fn main() !void {
             continue;
         }
 
-        if (try swapchain.acquireNextImageOrCreate(
+        const acquired = swapchain.acquireNextImageOrCreate(
             acquired_semaphore,
             extent,
-        )) |acquired| {
-            if (acquired.result != .success) {
-                // TODO: resize swapchain
-                std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
-                break;
-            } else {
-                try renderer.recordClearImage(
-                    &device,
-                    commandbuffers[0],
-                    acquired.image,
-                    std.time.nanoTimestamp(),
-                );
-
-                try device.queueSubmit(queue, 1, &.{.{
-                    .wait_semaphore_count = 1,
-                    .p_wait_semaphores = @ptrCast(&acquired_semaphore),
-                    .p_wait_dst_stage_mask = &.{.{
-                        .transfer_bit = true,
-                        .color_attachment_output_bit = true,
-                    }},
-                    .command_buffer_count = 1,
-                    .p_command_buffers = &commandbuffers,
-                }}, submit_fence);
-                _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
-                try device.resetFences(1, @ptrCast(&submit_fence));
-
-                try swapchain.present(acquired.image_index, &.{});
-            }
+        ) catch |err| {
+            @panic(@errorName(err));
+        } orelse {
+            continue;
+        };
+        if (acquired.result != .success) {
+            // TODO: resize swapchain
+            std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
+            break;
         }
+
+        try renderer.recordClearImage(
+            &device,
+            commandbuffers[0],
+            acquired.image,
+            std.time.nanoTimestamp(),
+        );
+
+        try device.queueSubmit(queue, 1, &.{.{
+            .wait_semaphore_count = 1,
+            .p_wait_semaphores = @ptrCast(&acquired_semaphore),
+            .p_wait_dst_stage_mask = &.{.{
+                .transfer_bit = true,
+                .color_attachment_output_bit = true,
+            }},
+            .command_buffer_count = 1,
+            .p_command_buffers = &commandbuffers,
+        }}, submit_fence);
+        _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
+        try device.resetFences(1, @ptrCast(&submit_fence));
+
+        try swapchain.present(acquired.image_index, &.{});
 
         // TODO: vsync
         std.Thread.sleep(std.time.ns_per_ms * 16);

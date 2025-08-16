@@ -3,10 +3,10 @@ const builtin = @import("builtin");
 const constants = @import("constants.generated.zig");
 const vk = @import("vulkan");
 const c = @import("c_android.zig");
-const DynamicLoader = @import("DynamicLoader_android.zig");
+const DynamicLoader = @import("DynamicLoader_linux.zig");
 const InstanceManager = @import("InstanceManager.zig");
 const DeviceManager = @import("DeviceManager.zig");
-const Swapchain = @import("Swapchain.zig");
+const SwapchainManager = @import("SwapchainManager.zig");
 const renderer = @import("renderer.zig");
 
 extern fn call_souce_process(state: *c.android_app, s: *c.android_poll_source) void;
@@ -82,7 +82,7 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     const picked = try instance_manager.pickPhysicalDevice(&instance, surface) orelse {
         return error.NoSutablePhysicalDevice;
     };
-    const format = try Swapchain.chooseSwapSurfaceFormat(
+    const format = try SwapchainManager.chooseSwapSurfaceFormat(
         allocator,
         &instance,
         picked.physical_device.physical_device,
@@ -103,13 +103,13 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
     );
     const queue = device.getDeviceQueue(picked.graphics_queue_family_index, 0);
 
-    var swapchain = try Swapchain.init(
+    var swapchain = try SwapchainManager.init(
         allocator,
         &instance,
         surface,
+        picked.physical_device.physical_device,
         picked.graphics_queue_family_index,
         picked.present_queue_family_index,
-        picked.physical_device.physical_device,
         &device,
         format,
         .{ .inherit_bit_khr = true },
@@ -164,40 +164,35 @@ fn _main_loop(app: *c.android_app, userdata: *UserData) !bool {
             }
         }
 
-        const acquired = try swapchain.acquireNextImage(acquired_semaphore);
-        if (acquired.result != .success) {
-            // TODO: resize swapchain
-            std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
-            break;
-        } else {
-            try renderer.recordClearImage(
-                &device,
-                commandbuffers[0],
-                acquired.image,
-                std.time.nanoTimestamp(),
-            );
+        if (try swapchain.acquireNextImageOrCreate(acquired_semaphore, .{ .width = 0, .height = 0 })) |acquired| {
+            if (acquired.result != .success) {
+                // TODO: resize swapchain
+                std.log.warn("acquire: {s}", .{@tagName(acquired.result)});
+                break;
+            } else {
+                try renderer.recordClearImage(
+                    &device,
+                    commandbuffers[0],
+                    acquired.image,
+                    std.time.nanoTimestamp(),
+                );
 
-            try device.queueSubmit(queue, 1, &.{.{
-                .wait_semaphore_count = 1,
-                .p_wait_semaphores = @ptrCast(&acquired_semaphore),
-                .p_wait_dst_stage_mask = &.{.{
-                    .transfer_bit = true,
-                    .color_attachment_output_bit = true,
-                }},
-                .command_buffer_count = 1,
-                .p_command_buffers = &commandbuffers,
-            }}, submit_fence);
-            _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
-            try device.resetFences(1, @ptrCast(&submit_fence));
+                try device.queueSubmit(queue, 1, &.{.{
+                    .wait_semaphore_count = 1,
+                    .p_wait_semaphores = @ptrCast(&acquired_semaphore),
+                    .p_wait_dst_stage_mask = &.{.{
+                        .transfer_bit = true,
+                        .color_attachment_output_bit = true,
+                    }},
+                    .command_buffer_count = 1,
+                    .p_command_buffers = &commandbuffers,
+                }}, submit_fence);
+                _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
+                try device.resetFences(1, @ptrCast(&submit_fence));
 
-            const res = try swapchain.present(acquired.image_index, &.{});
-            if (res != .success) {
-                std.log.warn("present: {s}", .{@tagName(res)});
+                try swapchain.present(acquired.image_index, &.{});
             }
         }
-
-        // wait
-        // std.Thread.sleep(std.time.ns_per_ms * 16);
     }
 
     return true;
