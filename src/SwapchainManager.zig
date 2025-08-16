@@ -59,6 +59,11 @@ pub fn init(
     else
         .exclusive;
 
+    const surface_capabilities = try instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
+        physical_device,
+        surface,
+    );
+
     return .{
         .allocator = allocator,
         .instance = instance,
@@ -72,9 +77,9 @@ pub fn init(
         },
         .create_info = .{
             .surface = undefined,
-            .min_image_count = undefined,
             .image_extent = undefined,
-            .pre_transform = undefined,
+            .min_image_count = surface_capabilities.min_image_count,
+            .pre_transform = surface_capabilities.current_transform,
             .image_format = format.format,
             .image_color_space = format.color_space,
             .image_array_layers = 1,
@@ -126,17 +131,14 @@ pub fn acquireNextImageOrCreate(
             .image = current.images[acquired.image_index],
         };
     } else {
+        self.create_info.surface = self.surface;
+        self.create_info.queue_family_index_count = self.qfi.len;
+        self.create_info.p_queue_family_indices = &self.qfi;
+
         const surface_capabilities = try self.instance.getPhysicalDeviceSurfaceCapabilitiesKHR(
             self.physical_device,
             self.surface,
         );
-
-        self.create_info.surface = self.surface;
-        self.create_info.min_image_count = surface_capabilities.min_image_count;
-        self.create_info.queue_family_index_count = self.qfi.len;
-        self.create_info.p_queue_family_indices = &self.qfi;
-        self.create_info.pre_transform = surface_capabilities.current_transform;
-
         if (surface_capabilities.current_extent.width == 0xFFFFFFFF) {
             self.create_info.image_extent = extent;
         } else {

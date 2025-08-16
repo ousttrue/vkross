@@ -11,6 +11,7 @@ const DynamicLoader = if (builtin.target.os.tag == .windows)
     @import("DynamicLoader_win32.zig")
 else
     @import("DynamicLoader_linux.zig");
+const FlightManager = @import("FlightManager.zig");
 
 pub extern fn glfwCreateWindowSurface(
     instance: vk.Instance,
@@ -169,24 +170,13 @@ pub fn main() !void {
     const acquired_semaphore = try device.createSemaphore(&.{}, null);
     defer device.destroySemaphore(acquired_semaphore, null);
 
-    const submit_fence = try device.createFence(&.{
-        // .flags = .{ .signaled_bit = true },
-    }, null);
-    defer device.destroyFence(submit_fence, null);
-
-    const pool = try device.createCommandPool(&.{
-        .queue_family_index = picked.graphics_queue_family_index,
-        .flags = .{ .reset_command_buffer_bit = true },
-    }, null);
-    defer device.destroyCommandPool(pool, null);
-
-    var commandbuffers: [1]vk.CommandBuffer = undefined;
-    try device.allocateCommandBuffers(&.{
-        .command_pool = pool,
-        .level = .primary,
-        .command_buffer_count = 1,
-    }, &commandbuffers);
-    defer device.freeCommandBuffers(pool, 1, &commandbuffers);
+    const flight_manager = try FlightManager.init(
+        allocator,
+        &device,
+        picked.graphics_queue_family_index,
+        swapchain.create_info.min_image_count,
+    );
+    defer flight_manager.deinit();
 
     while (c.glfwWindowShouldClose(window) == c.GLFW_FALSE) {
         c.glfwPollEvents();
@@ -210,9 +200,11 @@ pub fn main() !void {
             break;
         }
 
+        const flight = flight_manager.flights[acquired.image_index];
+
         try renderer.recordClearImage(
             &device,
-            commandbuffers[0],
+            flight.command_buffer,
             acquired.image,
             std.time.nanoTimestamp(),
         );
@@ -225,10 +217,10 @@ pub fn main() !void {
                 .color_attachment_output_bit = true,
             }},
             .command_buffer_count = 1,
-            .p_command_buffers = &commandbuffers,
-        }}, submit_fence);
-        _ = try device.waitForFences(1, @ptrCast(&submit_fence), vk.TRUE, std.math.maxInt(u64));
-        try device.resetFences(1, @ptrCast(&submit_fence));
+            .p_command_buffers = @ptrCast(&flight.command_buffer),
+        }}, flight.submit_fence);
+        _ = try device.waitForFences(1, @ptrCast(&flight.submit_fence), vk.TRUE, std.math.maxInt(u64));
+        try device.resetFences(1, @ptrCast(&flight.submit_fence));
 
         try swapchain.present(acquired.image_index, &.{});
 
