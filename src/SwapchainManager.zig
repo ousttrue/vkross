@@ -1,5 +1,6 @@
 const std = @import("std");
 const vk = @import("vulkan");
+const Swapchain = @import("Swapchain.zig");
 
 allocator: std.mem.Allocator,
 instance: *const vk.InstanceProxy,
@@ -9,11 +10,7 @@ device: *const vk.DeviceProxy,
 present_queue: vk.Queue,
 qfi: [2]u32,
 create_info: vk.SwapchainCreateInfoKHR,
-
-current: ?struct {
-    swapchain: vk.SwapchainKHR,
-    images: []vk.Image,
-} = null,
+current: ?Swapchain = null,
 
 pub fn chooseSwapSurfaceFormat(
     allocator: std.mem.Allocator,
@@ -92,8 +89,7 @@ pub fn init(
 
 pub fn deinit(self: @This()) void {
     if (self.current) |current| {
-        self.allocator.free(current.images);
-        self.device.destroySwapchainKHR(current.swapchain, null);
+        current.deinit(self.allocator, self.device);
     }
 }
 
@@ -149,24 +145,14 @@ pub fn acquireNextImageOrCreate(
 
         const swapchain = try self.device.createSwapchainKHR(&self.create_info, null);
 
-        var image_count: u32 = undefined;
-        _ = try self.device.getSwapchainImagesKHR(swapchain, &image_count, null);
-        if (image_count == 0) {
-            @panic("no swapchain image");
-        }
+        const current = try Swapchain.init(self.allocator, self.device, swapchain);
         std.log.info("swapchain created {} x {}. {} images", .{
             self.create_info.image_extent.width,
             self.create_info.image_extent.height,
-            image_count,
+            current.images.len,
         });
+        self.current = current;
 
-        const images = try self.allocator.alloc(vk.Image, image_count);
-        _ = try self.device.getSwapchainImagesKHR(swapchain, &image_count, @ptrCast(images));
-
-        self.current = .{
-            .swapchain = swapchain,
-            .images = images,
-        };
         if (self.create_info.old_swapchain != .null_handle) {
             self.device.destroySwapchainKHR(self.create_info.old_swapchain, null);
             self.create_info.old_swapchain = .null_handle;
