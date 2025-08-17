@@ -1,0 +1,17 @@
+.{
+    .name = .simple_native_activity,
+    .version = "0.0.0",
+    .fingerprint = 0x4cea8b76c49647dc,
+    .minimum_zig_version = "0.14.1",
+    .dependencies = .{
+        .android = .{
+            .url = "git+https://github.com/ousttrue/zig-android-sdk.git?ref=addLibrary#3092b02730672a90504809904a5f05c9e2fa18cb",
+            .hash = "android-0.1.0-7iz7QuXeAQAEJoUVh7OHiRdlPIZjsZ2B_Jkqa3slened",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

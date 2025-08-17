@@ -10,13 +10,13 @@ pub fn build(b: *std.Build) void {
         .os_tag = .linux,
         .abi = .android,
     });
-
-    const optimize = b.standardOptimizeOption(.{});
     std.log.debug("host: {s}", .{b.graph.host.result.zigTriple(b.allocator) catch @panic("OOP")});
     std.log.debug("target: {s}", .{target.result.zigTriple(b.allocator) catch @panic("OOP")});
     if (!target.result.abi.isAndroid()) {
         @panic("android abi required");
     }
+
+    const optimize = b.standardOptimizeOption(.{});
 
     const vkross = b.dependency("vkross", .{
         .target = target,
